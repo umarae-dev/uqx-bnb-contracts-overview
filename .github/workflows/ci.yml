@@ -21,6 +21,11 @@ jobs:
         run: node scripts/check-public-repo.js
       - name: Install
         run: npm install
+      - name: Export lockfile for verification
+        uses: actions/upload-artifact@v7
+        with:
+          name: package-lock
+          path: package-lock.json
       - name: Runtime dependency audit
         run: npm audit --omit=dev --audit-level=high
       - name: Compile
