@@ -1,0 +1,17 @@
+{
+  "name": "uqx-bnb-contracts-public-reference",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Public runnable UQX BNB Smart Chain contract reference",
+  "license": "MIT",
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "clean": "hardhat clean"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "@openzeppelin/contracts": "^4.9.6",
+    "hardhat": "^2.29.0"
+  }
+}
