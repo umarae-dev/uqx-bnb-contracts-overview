@@ -189,23 +189,30 @@ GitHub Actions performs:
 ```text
 node scripts/check-public-repo.js
 npm install
+npm audit --omit=dev --audit-level=high
 npm run compile
 npm test
 ```
 
-The workflow runs on pushes, pull requests and manual dispatch. It intentionally contains no deployment credential and never deploys to a live chain.
+The workflow runs on pushes, pull requests and manual dispatch. It intentionally contains no deployment credential and never deploys to a live chain. The UQX test suite currently contains 30 production-derived tests covering token, vesting, presale and timelock behavior.
+
+The runtime dependency audit is blocking. The copied production test harness remains on Hardhat 2 so the tests are not rewritten merely to satisfy a major tooling migration; known development-tool advisories inherited from the Hardhat-2 dependency graph are described transparently in [`SECURITY.md`](SECURITY.md).
 
 ## Security
 
 Do not put a real credential in a public issue, commit, pull request, workflow, `.env.example`, test fixture or deployment example. Public contract addresses and transaction hashes are not secrets.
 
-See [`SECURITY.md`](SECURITY.md) for trust assumptions and responsible disclosure guidance.
+See [`SECURITY.md`](SECURITY.md) for trust assumptions, dependency-audit scope and responsible disclosure guidance.
 
 ## Provenance
 
 The wider production system predates this public extraction. Public Git history reflects the extraction/maintenance timeline and is not backdated to imitate private development history.
 
 See [`PROVENANCE.md`](PROVENANCE.md).
+
+## Release / judge verification
+
+See [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md) for the exact clean-install, secret-safety, compile/test, source-integrity and BNB-evidence checks used before submission.
 
 ## License
 
