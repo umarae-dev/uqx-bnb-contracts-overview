@@ -1,370 +1,189 @@
-# UQX — BNB Smart Chain Contract Architecture
+# UQX BNB Contracts — Public Reference
 
-> **A fixed-supply BNB-native token stack with separated token, presale, vesting and governance trust boundaries.**
+[![CI](https://github.com/umarae-dev/uqx-bnb-contracts-overview/actions/workflows/ci.yml/badge.svg)](https://github.com/umarae-dev/uqx-bnb-contracts-overview/actions/workflows/ci.yml)
 
-UQX is the BNB Smart Chain token layer of the broader Zynost ecosystem. The production contracts separate the base token from higher-risk distribution logic so the token itself stays intentionally minimal while presale, vesting and emergency controls live in dedicated contracts.
+> **Runnable Solidity reference for the UQX token, allocation vesting, and presale mechanics on BNB Smart Chain.**
 
-**Network:** BNB Smart Chain mainnet  
-**Token:** Zynost UQX (`UQX`)  
-**Standard:** ERC-20 / BEP-20 compatible  
-**Solidity:** 0.8.23  
-**Deployment date:** 18 August 2026
+This repository contains real executable Solidity and Hardhat tests. It is intentionally separated from production deployment secrets and governance operations.
 
----
+## What is public
 
-## Mainnet contracts
+- `contracts/UqxToken.sol` — fixed-supply 1B UQX token implementation;
+- `contracts/UqxVestingReference.sol` — independently runnable Merkle-based vesting reference;
+- `contracts/UqxPresaleReference.sol` — independently runnable fixed-price presale/vesting reference;
+- adversarial Hardhat tests;
+- local-only Hardhat config;
+- public BSC deployment documentation;
+- architecture, security, provenance, and disclosure-boundary docs.
 
-| Component | BSC mainnet address | Role |
-|---|---|---|
-| **UQX Token** | `0x68B1Eb4b344cc86750bd9Ac9e3f4F53B3aF48A28` | Fixed-supply UQX asset |
-| **UQX Vesting** | `0xB3d0CD3c7a73F20689223AdF6223F53A8C245326` | Merkle-based mining / snapshot distribution |
-| **TimelockController** | `0x9dE032505A10F8A9d4D9445A0cEa9bF49320F569` | Delayed governance for privileged distribution actions |
-| **UQX Presale** | `0xe2f3931Be4A5e1f7C8266C3312C015E426f625dD` | On-chain stablecoin purchase + vesting |
+The vesting and presale contracts are explicitly named **Reference** because they are public reusable editions derived from the production architecture, not a promise of byte-for-byte identity with live deployment source/configuration.
 
-See [`DEPLOYMENTS.md`](DEPLOYMENTS.md) for current deployment/funding status.
+## Quick start
 
----
+Requirements: Node.js 20+ and npm.
 
-## Contract system
-
-```text
-                    UQX Token
-                  fixed 1B supply
-                       │
-           ┌───────────┴───────────┐
-           │                       │
-           ▼                       ▼
-     UQX Vesting              UQX Presale
-   mining/snapshot pool       stablecoin buyers
-           │                       │
-           └───────────┬───────────┘
-                       │ owner controls
-                       ▼
-               TimelockController
-                       │
-                       ▼
-                 Safe multisig
+```bash
+git clone https://github.com/umarae-dev/uqx-bnb-contracts-overview.git
+cd uqx-bnb-contracts-overview
+npm install
+npm run compile
+npm test
 ```
 
-The key architectural idea is **separation of privilege**:
+The default configuration uses the local Hardhat network. No production key, signer, RPC credential, treasury credential, multisig secret, or environment file is required.
 
-- the token contract has no owner-controlled minting or blacklist logic;
-- distribution contracts contain the custom logic that may need emergency controls;
-- those owner actions are routed through delayed governance instead of a direct single-key owner.
-
----
-
-## UQX Token
-
-The production token contract is intentionally small.
-
-### Fixed supply
-
-The full supply is minted exactly once in the constructor:
-
-**1,000,000,000 UQX**
-
-There is no public or owner-only mint function after deployment.
-
-### No token-level privileged controls
-
-The token contract intentionally does **not** implement:
-
-- additional minting;
-- owner-controlled transfer restrictions;
-- blacklist functions;
-- token-level pause/freeze;
-- arbitrary balance modification.
-
-This means distribution/security controls can be upgraded operationally at the surrounding-contract layer without giving an administrator a generic ability to freeze or rewrite balances in the base asset.
-
----
-
-## Token allocation state
-
-The initial supply is minted to treasury and then allocated into purpose-specific pools.
-
-Current on-chain funding state:
-
-| Pool | Allocation | Status |
-|---|---:|---|
-| Mining / reward vesting | **250,000,000 UQX (25%)** | Funded into UQX Vesting |
-| Presale | **150,000,000 UQX (15%)** | Funded into UQX Presale |
-| Remaining ecosystem allocations | **600,000,000 UQX (60%)** | Treasury-held pending dedicated distribution mechanisms |
-
-The remaining allocation includes ecosystem/treasury, team, liquidity, advisors and community buckets. Dedicated on-chain distribution contracts for all of those remaining buckets are **not being claimed as complete yet**.
-
-That distinction is deliberate: this repository documents what is actually deployed, not what is only planned in tokenomics.
-
----
-
-## UQX Presale
-
-The presale contract records each purchase directly on BNB Smart Chain rather than representing a purchase only in an off-chain database.
-
-Current contract parameters include:
-
-- fixed price: **$0.005 per UQX**;
-- maximum presale allocation: **150,000,000 UQX**;
-- accepted stablecoin allowlist managed by delayed governance;
-- USDT / USDC payment flow on BNB Smart Chain;
-- buyer allocation stored on-chain;
-- payment forwarded directly to the configured funds recipient;
-- presale contract does not intentionally accumulate stablecoin custody;
-- hard on-chain cap prevents allocations beyond the presale pool.
-
-### Presale vesting
-
-Each buyer's vesting clock begins from their first purchase.
-
-Current schedule:
-
-- **20% immediately vested**;
-- remaining **80% linearly vested over 180 days**.
-
-The buyer claims only the newly vested delta. Previously claimed amounts are tracked on-chain.
-
----
-
-## Mining / snapshot vesting
-
-The separate UQX Vesting contract is designed to bridge off-chain UQX reward balances into an on-chain claim system at launch/snapshot time.
-
-Rather than storing every reward-account row on-chain during the engagement phase, the final allocation dataset can be committed as a **Merkle root**.
+## Contract architecture
 
 ```text
-UQX reward ledger
-       │
-       ▼
-deterministic snapshot
-       │
-       ▼
-Merkle tree
-       │
-       ▼
-root committed on-chain once
-       │
-       ▼
-user submits proof for own allocation
-       │
-       ▼
-vesting math determines claimable UQX
+                         UQX Token
+                    fixed 1B supply
+                          │
+            ┌─────────────┴─────────────┐
+            ▼                           ▼
+   Vesting Reference             Presale Reference
+   Merkle allocations            direct buyer accounting
+   20% immediate                 20% immediate
+   linear remainder              linear remainder
+   mining: 240 days              180 days
+   presale: 180 days             stablecoin allowlist
+            │                           │
+            └─────────────┬─────────────┘
+                          ▼
+                   user-controlled wallet
+                          │
+                          ▼
+                  BNB Smart Chain
 ```
 
-### Mining allocation schedule
+## Security invariants demonstrated publicly
 
-For snapshot-based mining allocations:
+### UQX token
 
-- **20% immediately vested** at launch;
-- remaining **80% linearly vested over 240 days**.
+- supply is minted once in the constructor;
+- no post-deployment mint function;
+- no owner role;
+- no token-level pause;
+- no blacklist;
+- no privileged balance rewrite.
 
-The vesting contract tracks claimed amounts independently for mining and presale allocation types so one allocation cannot consume the claim history of another.
+### Vesting reference
 
-### Root immutability
+- Merkle root can be set once;
+- zero root rejected;
+- launch timestamp cannot be placed in the past;
+- allocation type is part of the leaf and claim accounting;
+- mining and presale claims maintain separate cumulative totals;
+- 20% immediate unlock, remainder linear;
+- invalid proofs rejected;
+- pause affects claims, not token transfers.
 
-The Merkle root can be set only once.
+### Presale reference
 
-Once set, the owner cannot replace it with a different snapshot through the normal contract interface.
+- payment token must be explicitly allowlisted;
+- presale cap enforced on-chain;
+- buyer allocation recorded on-chain;
+- payment forwards directly to the configured recipient;
+- 20% immediate unlock, remainder linear over 180 days;
+- administrative controls remain owner-gated;
+- reference configuration contains no production addresses or keys.
 
-The start timestamp also cannot be set in the past, preventing an accidental configuration that would immediately defeat the intended vesting schedule.
+## Tests
 
----
+The public suite covers important invariants including:
 
-## Current mining-vesting status
+- exact fixed supply;
+- zero-address constructor protection;
+- one-time vesting root;
+- 20% launch vesting;
+- invalid Merkle proof rejection;
+- claim pause behavior;
+- payment forwarding;
+- buyer allocation accounting;
+- payment-token allowlist enforcement;
+- owner-only administration.
 
-The **250M UQX mining pool is funded**, but the final mining Merkle root has **not yet been committed**.
+Run:
 
-That means:
+```bash
+npm test
+```
 
-- the contract is funded and ready;
-- the application reward ledger is still the source for the pre-snapshot reward state;
-- the real snapshot must be generated and independently checked before governance schedules `setRoot()`;
-- once executed, the root is intentionally irreversible.
+## BSC mainnet evidence
 
-This is an important operational milestone, not something this overview hides behind a generic "live" label.
+Public deployment documentation records the following BSC mainnet deployment dated **18 August 2026**:
 
----
+| Component | Address |
+|---|---|
+| UQX Token | `0x68B1Eb4b344cc86750bd9Ac9e3f4F53B3aF48A28` |
+| UQX Vesting | `0xB3d0CD3c7a73F20689223AdF6223F53A8C245326` |
+| TimelockController | `0x9dE032505A10F8A9d4D9445A0cEa9bF49320F569` |
+| UQX Presale | `0xe2f3931Be4A5e1f7C8266C3312C015E426f625dD` |
+| Safe multisig | `0x7E7bAf58129dc3e1992ef2cAfbD981391D522C97` |
 
-## Delayed governance
+See [`DEPLOYMENTS.md`](DEPLOYMENTS.md) for funded-pool status, governance context, and important caveats.
 
-Custom distribution contracts contain emergency/administrative functions, but their ownership is not intended to sit directly on a normal deployer wallet.
+The deployment documentation currently records:
 
-The deployed architecture routes owner authority through an OpenZeppelin **TimelockController**.
+- 1,000,000,000 UQX total supply;
+- 250M UQX funded to the mining/reward vesting pool;
+- 150M UQX funded to the presale pool;
+- mining Merkle root not yet set at the documented state;
+- remaining treasury-held allocation buckets are not all claimed to have dedicated distribution contracts.
 
-Current governance model:
+## Public / private boundary
+
+### Public
+
+- reusable contract mechanics;
+- public reference source;
+- tests;
+- architecture/security docs;
+- public chain addresses and transaction evidence intended for verification.
+
+### Not published
+
+- deployer private keys;
+- production signer/multisig secrets;
+- RPC credentials;
+- treasury operational credentials;
+- production environment files;
+- private governance runbooks;
+- internal release procedures;
+- snapshot-generation infrastructure;
+- unpublished user allocation data.
+
+See [`PUBLIC_PRIVATE_BOUNDARY.md`](PUBLIC_PRIVATE_BOUNDARY.md).
+
+## Production lineage
+
+This repository is a public-source extraction from a wider private production codebase. Public history is not backdated to imitate private development history.
+
+See [`PROVENANCE.md`](PROVENANCE.md).
+
+## CI
+
+GitHub Actions runs:
 
 ```text
-Safe multisig
-    │
-    │ proposes owner action
-    ▼
-TimelockController
-    │
-    │ mandatory ~48h delay
-    ▼
-Publicly executable queued action
-    │
-    ▼
-Vesting / Presale contract
+npm install
+npm run compile
+npm test
 ```
 
-The delay gives observers time to inspect a queued privileged action before it becomes executable.
+on pushes and pull requests. The project is intentionally configured for local deterministic testing rather than embedding production deployment configuration in CI.
 
-Once the delay has passed, execution does not need to depend on one particular signer remaining online.
+## Security
 
----
+No secret is required to compile or test this repository. `.env`, private-key files, generated artifacts, and local dependency directories are excluded from source control by default.
 
-## Emergency controls — where they exist and where they do not
+Do not open a public issue containing production credentials, exploitable live-system secrets, or private user allocation data. See [`SECURITY.md`](SECURITY.md).
 
-### Base token
+## License
 
-**No admin pause.**
+MIT. See [`LICENSE`](LICENSE).
 
-A compromised distribution administrator cannot use the UQX token contract itself to globally freeze holders.
+Open-source code does not grant rights to Zynost/UQX trademarks or branding.
 
-### Vesting / presale
+## Disclaimer
 
-These custom contracts do have pause/unpause capability for emergency containment.
-
-That control affects new claim/purchase operations in the corresponding distribution contract — it does not rewrite the UQX token's base balances.
-
-Privileged actions are governed through the timelock architecture.
-
----
-
-## Trust boundaries
-
-| Component | Can do | Cannot do |
-|---|---|---|
-| UQX Token | Standard token transfers | Mint new supply after deployment, blacklist holders, freeze token globally |
-| UQX Vesting | Verify Merkle proofs, calculate vesting, transfer valid claims | Replace root after it is set, redirect a user's valid allocation through a normal admin claim function |
-| UQX Presale | Record purchases, enforce cap, release vested purchases | Sell beyond hard cap |
-| Timelock | Execute delayed privileged actions | Bypass its configured delay through the normal governance path |
-| Safe multisig | Propose governed actions | Directly rewrite token balances |
-
----
-
-## Testing
-
-The private production repository contains dedicated test suites for:
-
-- UQX Token;
-- UQX Presale;
-- UQX Vesting;
-- vesting + timelock integration;
-- Merkle proof generation/verification helpers.
-
-Tests are used to cover fixed supply, vesting progression, claim accounting, invalid proofs, owner restrictions, emergency pause behavior, presale caps and governance-delay behavior.
-
-A test suite reduces risk but is not a substitute for an independent smart-contract audit.
-
----
-
-## Relationship to the UQX application
-
-The native Android application intentionally has two distinct layers:
-
-```text
-UQX app reward account
-        │
-        │ future/snapshot bridge
-        ▼
-UQX Vesting contract
-        │
-        ▼
-On-chain UQX
-        │
-        ▼
-Self-custody BNB wallet
-```
-
-Presale positions are already read directly from BNB Smart Chain by the native wallet.
-
-See:
-
-- [UQX Android App Overview](https://github.com/umarae-dev/uqx-app-overview)
-- [UQX Backend Overview](https://github.com/umarae-dev/uqx-backend-overview)
-
----
-
-## Relationship to Zynost
-
-UQX is the BNB-native community/token layer of a wider ecosystem:
-
-```text
-Zynost Intelligence
-        │
-        ├── Zynost Client
-        ├── Zynost Pay
-        ├── Zynost Paymaster
-        │
-        └── UQX
-             ├── native Android community app
-             ├── fixed-supply BNB token
-             ├── self-custody wallet
-             ├── vesting / rewards bridge
-             └── presale infrastructure
-```
-
----
-
-## Technology
-
-Solidity 0.8.23 · OpenZeppelin ERC20 · Ownable · Pausable · SafeERC20 · MerkleProof · TimelockController · Hardhat · ethers.js · BNB Smart Chain
-
----
-
-## Public vs. private source boundary
-
-This repository is a **public architecture/deployment overview**, not a source-code mirror of the live production contracts repository.
-
-### Public here
-
-- deployed public contract addresses;
-- fixed-supply model;
-- high-level contract architecture;
-- token allocation/funding state;
-- vesting rules;
-- governance model;
-- public security assumptions;
-- deployment status.
-
-### Kept private for now
-
-- production deployment scripts;
-- deployer/signing credentials;
-- operational runbooks;
-- private environment configuration;
-- production automation;
-- unaudited implementation source not yet selected for public release.
-
-**No private key, seed phrase, Safe signer secret, API credential or infrastructure secret belongs in this repository.**
-
----
-
-## Open-source / BNB hackathon boundary
-
-This overview repository is **not** being presented as the final open-source hackathon submission by itself.
-
-For a BNB hackathon/open-source submission, Zynost should publish a separately scoped, runnable and reproducible component whose source can safely remain public. The commercial production contract repository does not need to be dumped wholesale simply to make this overview look more complete.
-
----
-
-## Security status
-
-The contracts have internal test coverage and deliberate privilege separation, but this repository does **not** claim an independent external audit unless and until one has actually been completed and published.
-
-See [`SECURITY.md`](SECURITY.md).
-
----
-
-## Status
-
-**Deployed on BNB Smart Chain mainnet.**
-
-- UQX Token: deployed;
-- UQX Vesting: deployed and funded for mining allocation;
-- Timelock governance: deployed and controlling privileged distribution actions;
-- UQX Presale: deployed and funded;
-- mining Merkle root: **not yet set**;
-- all remaining tokenomics buckets: **not yet represented by dedicated distribution contracts**.
+This repository is technical documentation and reference software. It is not financial advice and does not promise token price appreciation, investment return, or future market performance. Independently verify current deployment addresses and contract state before interacting with BNB Smart Chain.
