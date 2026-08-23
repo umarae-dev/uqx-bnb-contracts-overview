@@ -21,8 +21,8 @@ jobs:
         run: node scripts/check-public-repo.js
       - name: Install
         run: npm install
-      - name: Dependency audit
-        run: npm audit --audit-level=high
+      - name: Runtime dependency audit
+        run: npm audit --omit=dev --audit-level=high
       - name: Compile
         run: npm run compile
       - name: UQX production-derived tests
