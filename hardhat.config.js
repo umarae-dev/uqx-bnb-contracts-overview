@@ -1,4 +1,5 @@
 require("@nomicfoundation/hardhat-toolbox");
+require("dotenv").config({ quiet: true });
 
 /** @type {import('hardhat/config').HardhatUserConfig} */
 module.exports = {
@@ -9,6 +10,12 @@ module.exports = {
     }
   },
   networks: {
-    hardhat: {}
+    hardhat: {},
+    bsc: {
+      url: process.env.BSC_DEPLOY_RPC_URL || "https://bsc-rpc.publicnode.com"
+    },
+    bscTestnet: {
+      url: process.env.BSC_TESTNET_RPC_URL || "https://bsc-testnet-rpc.publicnode.com"
+    }
   }
 };
