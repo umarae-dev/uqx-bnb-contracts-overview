@@ -7,6 +7,7 @@ Use this before a public release or hackathon submission.
 - [ ] Node.js 20+
 - [ ] `npm install`
 - [ ] `npm run check:public`
+- [ ] `npm audit --omit=dev --audit-level=high`
 - [ ] `npm run compile`
 - [ ] `npm test`
 - [ ] Fresh clone succeeds without any production credential
@@ -28,6 +29,12 @@ Use this before a public release or hackathon submission.
 - [ ] No user database dump, backup or unpublished allocation dataset
 - [ ] No private incident/governance runbook containing operational secrets
 - [ ] `.env.example` contains placeholders only
+
+## Dependency boundary
+
+- [ ] Runtime dependency audit passes at high severity
+- [ ] Hardhat-2 development-tool advisories are reviewed and remain accurately documented in `SECURITY.md`
+- [ ] No unused toolbox/coverage/gas-reporting/Ignition/TypeChain packages are reintroduced without need
 
 ## BNB Chain evidence
 
