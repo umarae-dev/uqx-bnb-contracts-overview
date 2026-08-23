@@ -2,7 +2,7 @@
 
 ## Scope
 
-This repository documents the public architecture of the UQX BNB Smart Chain contracts. It is not the production source repository and contains no deployment credential or signer secret.
+This repository publishes the production-safe UQX BNB Smart Chain contract subsystem, its UQX tests and selected deployment/inspection utilities. It is a clean public extraction, not the private production repository, and it must never contain a real deployment credential, signer secret, user database or unpublished allocation dataset.
 
 ## Security model
 
@@ -16,19 +16,17 @@ The base token minimizes privileged behavior:
 - no token-level pause;
 - no owner-controlled balance rewrite.
 
-This reduces the consequences of an operational key compromise at the token layer.
-
 ### UQX Vesting
 
-The vesting contract introduces custom logic, so it carries stronger controls:
+The vesting contract includes custom logic and therefore additional controls:
 
 - Merkle-proof validation;
-- allocation-type separation;
-- cumulative claim accounting;
+- mining/presale allocation-type separation;
+- cumulative claim accounting per allocation type;
 - one-time Merkle-root configuration;
-- launch timestamp guard;
+- past-launch timestamp rejection;
 - emergency pause/unpause;
-- privileged actions routed through timelock governance.
+- privileged actions intended to route through delayed timelock governance.
 
 ### UQX Presale
 
@@ -37,16 +35,15 @@ The presale contract enforces:
 - accepted-payment-token allowlist;
 - hard UQX sale cap;
 - direct buyer allocation accounting;
+- payment forwarding to the configured recipient;
 - cumulative claim tracking;
 - deterministic time-based vesting;
 - emergency pause/unpause;
-- delayed owner control through the timelock.
+- owner control intended to sit behind the existing timelock.
 
 ## Governance
 
-Privileged actions on the custom distribution contracts are intended to pass through a Safe multisig-controlled OpenZeppelin TimelockController with an approximately 48-hour configured delay.
-
-This does not make governance risk disappear. It makes privileged actions harder to execute instantly and gives observers time to inspect queued operations.
+The documented deployment routes privileged distribution-contract actions through a Safe multisig-controlled OpenZeppelin `TimelockController` with an approximately 48-hour configured delay. This does not remove governance risk; it prevents immediate unilateral owner actions and provides a public delay before scheduled operations become executable.
 
 ## Operational risks that remain
 
@@ -61,43 +58,35 @@ Important risks include:
 - incomplete distribution mechanisms for treasury-held allocations;
 - legal/regulatory risk around token sale/distribution.
 
-## Current transparent limitations
+## Transparent limitations
 
-- An independent external audit is not claimed here unless a published audit is linked later.
-- The mining Merkle root has not yet been committed.
-- Remaining treasury tokenomics buckets do not all have dedicated on-chain vesting/distribution contracts yet.
-- Internal tests are useful evidence but are not equivalent to third-party audit assurance.
+- An independent external audit is **not** claimed unless a published audit is linked here later.
+- Internal/CI tests are evidence of tested invariants, not a substitute for third-party audit assurance.
+- `DEPLOYMENTS.md` is timestamped documentation; current on-chain state should be independently verified before interacting with live contracts.
 
-## Secrets
+## Secrets and sensitive data
 
 Never commit or disclose:
 
-- deployer private keys;
+- any real `.env` file;
+- deployer private keys or seed phrases;
 - Safe signer seed phrases/private keys;
-- RPC credentials if private;
-- production `.env` contents;
-- API credentials;
-- operational recovery secrets;
+- keystore files;
+- private RPC/API/database credentials;
+- service-account credentials;
+- treasury operational recovery secrets;
+- database dumps, logs or backups containing private data;
+- unpublished Merkle allocation datasets/user balances;
 - user wallet seed phrases/private keys.
 
 Public contract addresses and transaction hashes are not secrets.
 
+The repository includes `scripts/check-public-repo.js` and CI checks for obvious credential patterns and forbidden sensitive filenames. These checks reduce accidental disclosure risk but do not replace human review.
+
 ## Responsible disclosure
 
-If you discover a vulnerability that could affect deployed contracts, treasury assets, claims or user funds, report it privately to the Zynost/UQX team before public disclosure so mitigation can be evaluated.
-
-Do not include private keys, seed phrases or unrelated personal data in a security report.
+If you discover a vulnerability that could affect deployed contracts, treasury assets, claims or user funds, use a private communication channel with the Zynost/UQX team before public disclosure so mitigation can be evaluated. Do not paste exploit-enabling live-system secrets, private keys, seed phrases or unrelated personal data into a public issue.
 
 ## Audit position
 
-The project should avoid claims such as "unhackable", "fully audited" or "safer than every competing token" unless independent evidence supports them.
-
-A future public security package should ideally include:
-
-- independent audit report;
-- verified source code for contracts intended for public verification;
-- reproducible deployment metadata;
-- dependency versions;
-- threat model;
-- test coverage summary;
-- bug-bounty / disclosure process.
+Do not describe this project as "unhackable", "fully audited" or guaranteed safe unless independent evidence supports that statement. Verified source, tests, CI and public deployment evidence improve transparency but are not equivalent to a professional external audit.
