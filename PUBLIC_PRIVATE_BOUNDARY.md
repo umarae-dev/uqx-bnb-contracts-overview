@@ -1,28 +1,32 @@
 # Public / Private Boundary
 
-This repository is a deliberately scoped open-source reference for UQX contracts on BNB Smart Chain.
+This repository publishes the production-safe UQX smart-contract subset for BNB Smart Chain while keeping credentials, private operational data and unrelated production systems out of source control.
 
 ## Public
 
-- fixed-supply UQX token source;
-- independently runnable public reference implementations of vesting and presale mechanics;
-- local Hardhat configuration;
-- adversarial tests;
-- deployment/address documentation already intended for public verification;
-- architecture and security documentation.
+- production-safe `UqxToken`, `UqxVesting` and `UqxPresale` Solidity source;
+- production UQX Hardhat tests and Merkle helper;
+- production UQX Merkle/deployment/inspection scripts that contain environment-variable references but no secret values;
+- OpenZeppelin TimelockController integration test and import shim;
+- secret-free Hardhat packaging/configuration needed to compile and test independently;
+- public deployment/address documentation intended for on-chain verification;
+- architecture, provenance and security documentation.
 
-## Private / not copied from production
+## Private / deliberately excluded
 
-- production deployer keys;
-- multisig signer identities or private signing material;
-- RPC credentials;
-- production treasury operational credentials;
-- private governance runbooks;
-- internal release procedures;
-- snapshot-generation infrastructure and unpublished allocation data;
-- any production environment file;
-- any operational secret not required to compile or test this public reference.
+- every real `.env` file;
+- deployer private keys or seed phrases;
+- Safe/multisig signer private material;
+- private RPC credentials;
+- treasury operational credentials;
+- API keys and unrelated backend/service credentials;
+- private governance/incident runbooks;
+- internal release procedures that contain operational secrets;
+- snapshot-generation infrastructure tied to private databases;
+- unpublished Merkle allocation datasets and user data;
+- database dumps, logs, backups, service-account files or keystores;
+- unrelated production systems not required to compile or evaluate the UQX contracts.
 
-The public vesting and presale contracts are reference editions derived from the production architecture. They are intentionally distinguishable from live production deployment source/configuration so reviewers can evaluate the mechanism without receiving operational secrets or assuming byte-for-byte identity with deployed contracts.
+Public contract addresses, token addresses, transaction hashes and intentionally public BNB Chain state are not secrets.
 
-No secret is required to run the public test suite.
+The repository must remain independently compilable and testable without any production credential. `.env.example` contains names/placeholders only.
