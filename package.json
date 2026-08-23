@@ -1,13 +1,19 @@
 {
-  "name": "uqx-bnb-contracts-public-reference",
+  "name": "uqx-bnb-contracts",
   "version": "1.0.0",
   "private": true,
-  "description": "Public runnable UQX BNB Smart Chain contract reference",
+  "description": "Open-source UQX smart contracts and production-derived Hardhat test suite for BNB Smart Chain",
   "license": "MIT",
   "scripts": {
     "compile": "hardhat compile",
-    "test": "hardhat test",
+    "test": "hardhat test test/uqx/*.test.js",
+    "test:uqx": "hardhat test test/uqx/*.test.js",
+    "check:public": "node scripts/check-public-repo.js",
     "clean": "hardhat clean"
+  },
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "ethers": "^6.15.0"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^5.0.0",
