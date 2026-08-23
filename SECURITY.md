@@ -45,6 +45,14 @@ The presale contract enforces:
 
 The documented deployment routes privileged distribution-contract actions through a Safe multisig-controlled OpenZeppelin `TimelockController` with an approximately 48-hour configured delay. This does not remove governance risk; it prevents immediate unilateral owner actions and provides a public delay before scheduled operations become executable.
 
+## Dependency audit policy
+
+CI runs `npm audit --omit=dev --audit-level=high` as a blocking check for runtime npm dependencies used by the public utilities. The public package intentionally uses a minimal Hardhat 2 development stack because the production-derived test suite is copied without rewriting its CommonJS/Hardhat-2 behavior.
+
+A full `npm audit` can report advisories inherited from the legacy Hardhat-2 compiler/test dependency graph. Those are development-tool advisories, not dependencies embedded in deployed UQX bytecode or the runtime `ethers`/`dotenv` utility dependency set. They are not hidden or represented as zero-risk. Migrating the copied test harness to Hardhat 3 would be a separate tooling migration and would no longer be a byte-for-byte copy of the production test harness.
+
+The public dependency set removes unused toolbox plugins such as coverage, gas reporting, Ignition and TypeChain to reduce unnecessary attack surface while preserving the exact copied UQX tests.
+
 ## Operational risks that remain
 
 Important risks include:
