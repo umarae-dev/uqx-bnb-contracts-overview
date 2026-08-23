@@ -17,10 +17,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-          cache: npm
+      - name: Public repository guard
+        run: node scripts/check-public-repo.js
       - name: Install
         run: npm install
       - name: Compile
         run: npm run compile
-      - name: Test
+      - name: UQX production-derived tests
         run: npm test
