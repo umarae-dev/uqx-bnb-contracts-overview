@@ -16,6 +16,7 @@ describe("UqxVesting", function () {
     const Vesting = await ethers.getContractFactory("UqxVesting");
     const vesting = await Vesting.deploy(await token.getAddress());
 
+    // Fund the vesting contract with enough tokens to cover every entry.
     const total = entries.reduce((sum, e) => sum + e.amount, 0n);
     await token.connect(treasury).transfer(await vesting.getAddress(), total);
 
@@ -63,10 +64,12 @@ describe("UqxVesting", function () {
     const entries = [{ address: alice.address, amount, allocationType: MINING }];
     const { vesting, tree } = await deployWithEntries(entries);
 
+    // Root never set.
     expect(await vesting.claimable(alice.address, amount, MINING)).to.equal(0n);
 
     const future = (await time.latest()) + 10 * DAY;
     await vesting.setRoot(tree.root, future);
+    // Root set but launch is still in the future.
     expect(await vesting.claimable(alice.address, amount, MINING)).to.equal(0n);
   });
 
@@ -81,23 +84,37 @@ describe("UqxVesting", function () {
     await time.increaseTo(launch);
 
     const proof = tree.proofFor(entries[0]);
-    const expectedImmediate = (amount * 2_000n) / 10_000n;
+    const expectedImmediate = (amount * 2_000n) / 10_000n; // 20%
     expect(await vesting.claimable(alice.address, amount, MINING)).to.equal(expectedImmediate);
 
+    // Note: the claim() transaction itself gets mined a moment after the
+    // view call above, so the contract will legitimately have vested a
+    // hair more by the time it executes — that's correct, continuous
+    // vesting, not a bug. Check internal consistency instead of an assumed
+    // external number: balance must equal whatever the contract itself
+    // recorded as claimed, and that must be >= the 20% we observed a
+    // moment earlier.
     await vesting.connect(alice).claim(amount, MINING, proof);
     const afterFirstClaim = await vesting.claimed(alice.address, MINING);
     expect(afterFirstClaim).to.be.at.least(expectedImmediate);
     expect(await token.balanceOf(alice.address)).to.equal(afterFirstClaim);
 
+    // Partway through the 240-day vest: more has vested, and it must still
+    // be strictly less than the full amount (still mid-vest).
     await time.increaseTo(launch + 120 * DAY);
     expect(await vesting.claimable(alice.address, amount, MINING)).to.be.above(0n);
     expect(await vesting.vestedAmount(amount, MINING)).to.be.below(amount);
 
+    // Fully vested after 240 days — everything left is claimable.
     await time.increaseTo(launch + 240 * DAY);
     expect(await vesting.vestedAmount(amount, MINING)).to.equal(amount);
     await vesting.connect(alice).claim(amount, MINING, proof);
     expect(await token.balanceOf(alice.address)).to.equal(amount);
 
+    // Fully vested, fully claimed: further time passing can't create more
+    // (vestedAmount is capped at totalAmount), so this now genuinely has
+    // nothing left — a real double-claim-protection check, not a
+    // race against the block clock.
     await time.increase(DAY);
     await expect(vesting.connect(alice).claim(amount, MINING, proof)).to.be.revertedWith(
       "UqxVesting: nothing to claim",
@@ -133,6 +150,7 @@ describe("UqxVesting", function () {
     await vesting.setRoot(tree.root, launch);
     await time.increaseTo(launch);
 
+    // Mallory tries to claim using Alice's proof for her own address.
     const aliceProof = tree.proofFor(entries[0]);
     await expect(vesting.connect(mallory).claim(amount, MINING, aliceProof)).to.be.revertedWith(
       "UqxVesting: invalid proof",
@@ -157,6 +175,11 @@ describe("UqxVesting", function () {
   });
 
   it("a single wallet holding BOTH a mining and a presale allocation can claim both independently", async function () {
+    // Regression test for a real bug caught in review: claimed[] was
+    // originally keyed by address alone, so claiming one allocation type
+    // silently ate into the claimable balance of the other for any wallet
+    // holding both. This is a completely realistic scenario — a miner
+    // buying presale with the same wallet — not an edge case.
     const [, , alice] = await ethers.getSigners();
     const miningAmount = 1_000n * 10n ** 18n;
     const presaleAmount = 500n * 10n ** 18n;
@@ -168,7 +191,7 @@ describe("UqxVesting", function () {
 
     const launch = (await time.latest()) + 60;
     await vesting.setRoot(tree.root, launch);
-    await time.increaseTo(launch + 365 * DAY);
+    await time.increaseTo(launch + 365 * DAY); // fully vested on both schedules
 
     const miningProof = tree.proofFor(entries[0]);
     const presaleProof = tree.proofFor(entries[1]);
@@ -176,6 +199,8 @@ describe("UqxVesting", function () {
     await vesting.connect(alice).claim(miningAmount, MINING, miningProof);
     expect(await token.balanceOf(alice.address)).to.equal(miningAmount);
 
+    // Before the fix, this would see claimable() == 0 because claimed[alice]
+    // was already >= the (much smaller) presale vested amount.
     expect(await vesting.claimable(alice.address, presaleAmount, PRESALE)).to.equal(presaleAmount);
     await vesting.connect(alice).claim(presaleAmount, PRESALE, presaleProof);
     expect(await token.balanceOf(alice.address)).to.equal(miningAmount + presaleAmount);
@@ -193,7 +218,7 @@ describe("UqxVesting", function () {
 
     const launch = (await time.latest()) + 60;
     await vesting.setRoot(tree.root, launch);
-    await time.increaseTo(launch + 365 * DAY);
+    await time.increaseTo(launch + 365 * DAY); // fully vested for everyone
 
     for (const entry of entries) {
       const proof = tree.proofFor(entry);
@@ -218,11 +243,13 @@ describe("UqxVesting", function () {
 
       const launch = (await time.latest()) + 60;
       await vesting.setRoot(tree.root, launch);
-      await time.increaseTo(launch + 365 * DAY);
+      await time.increaseTo(launch + 365 * DAY); // fully vested
 
       const proof = tree.proofFor(entries[0]);
       await vesting.pause();
 
+      // Vesting math keeps running in the background — it's just claim()
+      // that's blocked, not the underlying entitlement.
       expect(await vesting.vestedAmount(amount, MINING)).to.equal(amount);
       await expect(vesting.connect(alice).claim(amount, MINING, proof)).to.be.revertedWith("Pausable: paused");
 
