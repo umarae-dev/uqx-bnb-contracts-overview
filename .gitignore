@@ -1,0 +1,16 @@
+node_modules/
+artifacts/
+cache/
+coverage/
+coverage.json
+typechain-types/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+.DS_Store
+.idea/
+.vscode/
