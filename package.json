@@ -16,7 +16,7 @@
     "ethers": "^6.15.0"
   },
   "devDependencies": {
-    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "@nomicfoundation/hardhat-toolbox": "^7.0.0",
     "@openzeppelin/contracts": "^4.9.6",
     "hardhat": "^2.29.0"
   }
