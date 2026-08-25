@@ -1,6 +1,6 @@
-# Release / Judge Verification Checklist
+# Release / Reviewer Verification Checklist
 
-Use this before a public release or hackathon submission.
+Use this before a public release or external technical review.
 
 ## Reproducibility
 
@@ -38,7 +38,7 @@ Use this before a public release or hackathon submission.
 
 ## BNB Chain evidence
 
-- [ ] `DEPLOYMENTS.md` addresses are current for the submission
+- [ ] `DEPLOYMENTS.md` addresses are current for the reviewed release
 - [ ] Public contract addresses/transactions can be independently verified on-chain
 - [ ] Any claim about funded pools/root/governance state matches current chain state or is clearly timestamped
 
@@ -48,4 +48,4 @@ Use this before a public release or hackathon submission.
 - [ ] `PUBLIC_PRIVATE_BOUNDARY.md` matches what is actually published
 - [ ] `PROVENANCE.md` distinguishes private development history from public extraction history
 - [ ] `SECURITY.md` avoids unsupported audit/security claims
-- [ ] CI status for the exact submission commit is green before showing a passing badge
+- [ ] CI status for the exact reviewed commit is green before showing a passing badge
