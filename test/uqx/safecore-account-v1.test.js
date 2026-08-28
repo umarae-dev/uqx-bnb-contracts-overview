@@ -95,11 +95,11 @@ describe("SafeCoreAccountV1", function () {
 
     await account.connect(owner).requestBudgetIncrease(asset, ethers.parseEther("500"));
     await account.connect(veto).cancelBudgetIncrease(asset);
-    expect((await account.pendingLimitIncrease(asset)).executableAt).to.equal(0);
+    expect((await account.pendingLimitIncrease(asset)).executableAt).to.equal(0n);
 
     await account.connect(owner).requestBudgetIncrease(asset, ethers.parseEther("500"));
     await account.connect(recovery).cancelBudgetIncrease(asset);
-    expect((await account.pendingLimitIncrease(asset)).executableAt).to.equal(0);
+    expect((await account.pendingLimitIncrease(asset)).executableAt).to.equal(0n);
   });
 
   it("prevents recovery and veto keys from spending", async function () {
@@ -119,11 +119,11 @@ describe("SafeCoreAccountV1", function () {
     await account.connect(recovery).requestOwnerRecovery(newOwner.address);
     await expect(account.applyOwnerRecovery()).to.be.revertedWithCustomError(account, "RecoveryNotReady");
     await account.connect(veto).cancelOwnerRecovery();
-    expect((await account.pendingOwnerRecovery()).executableAt).to.equal(0);
+    expect((await account.pendingOwnerRecovery()).executableAt).to.equal(0n);
 
     await account.connect(recovery).requestOwnerRecovery(newOwner.address);
     await account.connect(owner).cancelOwnerRecovery();
-    expect((await account.pendingOwnerRecovery()).executableAt).to.equal(0);
+    expect((await account.pendingOwnerRecovery()).executableAt).to.equal(0n);
   });
 
   it("rotates owner only after the immutable recovery delay", async function () {
