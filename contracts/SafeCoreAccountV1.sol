@@ -3,7 +3,7 @@ pragma solidity ^0.8.23;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
 /// @title SafeCoreAccountV1
 /// @notice Experimental, non-upgradeable bounded-loss vault prototype.
@@ -122,7 +122,6 @@ contract SafeCoreAccountV1 is ReentrancyGuard {
         emit Deposited(msg.sender, msg.value);
     }
 
-    /// @notice Returns the effective current epoch budget without mutating state.
     function budgetOf(address asset) external view returns (uint256 limit, uint256 spent, uint256 remaining, uint256 epochStartedAt) {
         Budget memory b = _budgets[asset];
         uint192 effectiveSpent = _effectiveSpent(b);
@@ -132,7 +131,6 @@ contract SafeCoreAccountV1 is ReentrancyGuard {
         epochStartedAt = _effectiveEpochStart(b);
     }
 
-    /// @notice Spend native BNB inside the precommitted epoch budget.
     function spendNative(address payable to, uint256 amount) external onlyOwner nonReentrant {
         if (to == address(0)) revert ZeroAddress();
         _consumeBudget(NATIVE_ASSET, amount);
@@ -141,7 +139,6 @@ contract SafeCoreAccountV1 is ReentrancyGuard {
         emit Spent(NATIVE_ASSET, to, amount, _remaining(NATIVE_ASSET));
     }
 
-    /// @notice Transfer an ERC-20 inside that token's precommitted epoch budget.
     function spendToken(IERC20 token, address to, uint256 amount) external onlyOwner nonReentrant {
         address asset = address(token);
         if (asset == address(0) || to == address(0)) revert ZeroAddress();
@@ -150,7 +147,6 @@ contract SafeCoreAccountV1 is ReentrancyGuard {
         emit Spent(asset, to, amount, _remaining(asset));
     }
 
-    /// @notice Tightening is monotonic and immediate: owner may only reduce a limit here.
     function reduceBudgetImmediately(address asset, uint192 newLimit) external onlyOwner {
         _rollEpoch(asset);
         Budget storage b = _budgets[asset];
@@ -161,7 +157,6 @@ contract SafeCoreAccountV1 is ReentrancyGuard {
         emit BudgetReduced(asset, old, newLimit);
     }
 
-    /// @notice Security weakening (higher instant-loss budget) cannot happen immediately.
     function requestBudgetIncrease(address asset, uint192 newLimit) external onlyOwner {
         _rollEpoch(asset);
         Budget storage b = _budgets[asset];
@@ -192,7 +187,6 @@ contract SafeCoreAccountV1 is ReentrancyGuard {
         emit LimitIncreaseApplied(asset, old, pending.newLimit);
     }
 
-    /// @notice Recovery key cannot spend; it can only start a delayed owner rotation.
     function requestOwnerRecovery(address newOwner) external onlyRecovery {
         if (newOwner == address(0) || newOwner == owner) revert ZeroAddress();
         uint64 executableAt = uint64(block.timestamp) + minimumSecurityDelay;
@@ -200,7 +194,6 @@ contract SafeCoreAccountV1 is ReentrancyGuard {
         emit OwnerRecoveryRequested(owner, newOwner, executableAt);
     }
 
-    /// @notice Veto or current owner can stop a hostile/accidental recovery.
     function cancelOwnerRecovery() external {
         if (msg.sender != owner && msg.sender != veto) revert Unauthorized();
         PendingOwnerRecovery memory pending = pendingOwnerRecovery;
@@ -209,7 +202,6 @@ contract SafeCoreAccountV1 is ReentrancyGuard {
         emit OwnerRecoveryCancelled(pending.newOwner, msg.sender);
     }
 
-    /// @notice After the immutable delay, anyone may finalize the already committed recovery.
     function applyOwnerRecovery() external {
         PendingOwnerRecovery memory pending = pendingOwnerRecovery;
         if (pending.executableAt == 0) revert RecoveryNotRequested();
@@ -226,7 +218,6 @@ contract SafeCoreAccountV1 is ReentrancyGuard {
         _rollEpoch(asset);
         Budget storage b = _budgets[asset];
         uint256 next = uint256(b.spent) + amount;
-        // A zero limit means spending is disabled, never unlimited.
         if (next > b.limit) revert BudgetExceeded();
         b.spent = uint192(next);
     }
