@@ -7,14 +7,25 @@ import "./SafeCoreAccountV4.sol";
 
 /// @title SafeCoreFactoryV4
 /// @notice EXPERIMENTAL gasless account factory. NOT AUDITED.
-/// @dev An arbitrary relayer may pay deployment gas, but the recovery identity
-///      must EIP-712-sign the exact immutable/initial SafeCore configuration.
+/// @dev Any relayer may pay deployment gas, but the recovery identity signs the
+///      exact configuration hash. The relayer cannot alter devices, rescue
+///      addresses, recovery commitment, delay, assets or limits.
 contract SafeCoreFactoryV4 is EIP712 {
     using ECDSA for bytes32;
 
     bytes32 private constant CREATE_TYPEHASH = keccak256(
         "CreateSafeCore(address identity,bytes32 configHash,uint256 nonce,uint256 deadline)"
     );
+
+    struct AccountConfig {
+        address initialDevice;
+        address emergencyAddress1;
+        address emergencyAddress2;
+        bytes32 recoveryCommitment;
+        uint64 destinationChangeDelay;
+        address[] initialAssets;
+        uint192[] initialLimits;
+    }
 
     mapping(address => address) public accountOf;
     mapping(address => uint256) public creationNonce;
@@ -30,13 +41,7 @@ contract SafeCoreFactoryV4 is EIP712 {
 
     function createAccountFor(
         address identity,
-        address initialDevice,
-        address emergencyAddress1,
-        address emergencyAddress2,
-        bytes32 recoveryCommitment,
-        uint64 destinationChangeDelay,
-        address[] calldata initialAssets,
-        uint192[] calldata initialLimits,
+        AccountConfig calldata config,
         uint256 deadline,
         bytes calldata identitySignature
     ) external returns (address account) {
@@ -44,15 +49,7 @@ contract SafeCoreFactoryV4 is EIP712 {
         if (accountOf[identity] != address(0)) revert AccountAlreadyExists();
         if (deadline < block.timestamp) revert SignatureExpired();
 
-        bytes32 configHash = configurationHash(
-            initialDevice,
-            emergencyAddress1,
-            emergencyAddress2,
-            recoveryCommitment,
-            destinationChangeDelay,
-            initialAssets,
-            initialLimits
-        );
+        bytes32 configHash = configurationHash(config);
         uint256 nonce = creationNonce[identity]++;
         bytes32 digest = _hashTypedDataV4(keccak256(abi.encode(
             CREATE_TYPEHASH, identity, configHash, nonce, deadline
@@ -61,36 +58,28 @@ contract SafeCoreFactoryV4 is EIP712 {
 
         SafeCoreAccountV4 created = new SafeCoreAccountV4(
             identity,
-            initialDevice,
-            emergencyAddress1,
-            emergencyAddress2,
-            recoveryCommitment,
-            destinationChangeDelay,
-            initialAssets,
-            initialLimits
+            config.initialDevice,
+            config.emergencyAddress1,
+            config.emergencyAddress2,
+            config.recoveryCommitment,
+            config.destinationChangeDelay,
+            config.initialAssets,
+            config.initialLimits
         );
         account = address(created);
         accountOf[identity] = account;
         emit SafeCoreAccountCreated(identity, account, msg.sender, configHash);
     }
 
-    function configurationHash(
-        address initialDevice,
-        address emergencyAddress1,
-        address emergencyAddress2,
-        bytes32 recoveryCommitment,
-        uint64 destinationChangeDelay,
-        address[] calldata initialAssets,
-        uint192[] calldata initialLimits
-    ) public pure returns (bytes32) {
+    function configurationHash(AccountConfig calldata config) public pure returns (bytes32) {
         return keccak256(abi.encode(
-            initialDevice,
-            emergencyAddress1,
-            emergencyAddress2,
-            recoveryCommitment,
-            destinationChangeDelay,
-            initialAssets,
-            initialLimits
+            config.initialDevice,
+            config.emergencyAddress1,
+            config.emergencyAddress2,
+            config.recoveryCommitment,
+            config.destinationChangeDelay,
+            config.initialAssets,
+            config.initialLimits
         ));
     }
 
