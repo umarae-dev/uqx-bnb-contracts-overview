@@ -56,16 +56,17 @@ contract SafeCoreFactoryV4 is EIP712 {
         )));
         if (digest.recover(identitySignature) != identity) revert InvalidSignature();
 
-        SafeCoreAccountV4 created = new SafeCoreAccountV4(
-            identity,
-            config.initialDevice,
-            config.emergencyAddress1,
-            config.emergencyAddress2,
-            config.recoveryCommitment,
-            config.destinationChangeDelay,
-            config.initialAssets,
-            config.initialLimits
-        );
+        SafeCoreAccountV4.InitConfig memory init = SafeCoreAccountV4.InitConfig({
+            initialDevice: config.initialDevice,
+            emergencyAddress1: config.emergencyAddress1,
+            emergencyAddress2: config.emergencyAddress2,
+            recoveryCommitment: config.recoveryCommitment,
+            destinationChangeDelay: config.destinationChangeDelay,
+            initialAssets: config.initialAssets,
+            initialLimits: config.initialLimits
+        });
+
+        SafeCoreAccountV4 created = new SafeCoreAccountV4(identity, init);
         account = address(created);
         accountOf[identity] = account;
         emit SafeCoreAccountCreated(identity, account, msg.sender, configHash);
