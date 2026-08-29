@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, safecore-v1, safecore-device-v2, safecore-v3]
+    branches: [main, safecore-v1, safecore-device-v2, safecore-v3, safecore-v4]
   pull_request:
   workflow_dispatch:
 
