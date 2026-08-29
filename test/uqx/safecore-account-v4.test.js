@@ -11,16 +11,16 @@ describe("SafeCoreAccountV4", function () {
     const paperSecret = ethers.keccak256(ethers.toUtf8Bytes("paper-v4-secret"));
     const commitment = ethers.keccak256(ethers.solidityPacked(["bytes32"], [paperSecret]));
     const Factory = await ethers.getContractFactory("SafeCoreAccountV4");
-    const account = await Factory.deploy(
-      identity.address,
-      deviceA.address,
-      safe1.address,
-      safe2.address,
-      commitment,
-      2 * DAY,
-      [NATIVE],
-      [ethers.parseEther("2")]
-    );
+    const config = {
+      initialDevice: deviceA.address,
+      emergencyAddress1: safe1.address,
+      emergencyAddress2: safe2.address,
+      recoveryCommitment: commitment,
+      destinationChangeDelay: 2 * DAY,
+      initialAssets: [NATIVE],
+      initialLimits: [ethers.parseEther("2")],
+    };
+    const account = await Factory.deploy(identity.address, config);
     await account.waitForDeployment();
     await identity.sendTransaction({ to: await account.getAddress(), value: ethers.parseEther("5") });
     return { account, identity, deviceA, deviceB, safe1, safe2, receiver, relayer, attacker, paperSecret };
@@ -116,10 +116,8 @@ describe("SafeCoreAccountV4", function () {
 
   it("lets a zero-gas Device B become authorized through relayed signatures", async function () {
     const { account, identity, deviceA, deviceB, relayer } = await fixture();
-    expect(await ethers.provider.getBalance(deviceB.address)).to.be.gt(0n); // Hardhat signer itself is funded.
     await enroll(account, identity, deviceA, deviceB, relayer);
     expect(await account.authorizedDevice(deviceB.address)).to.equal(true);
-    // All on-chain txs were sent by relayer, not Device B.
   });
 
   it("relays an authorized device spend and rejects signature replay", async function () {
