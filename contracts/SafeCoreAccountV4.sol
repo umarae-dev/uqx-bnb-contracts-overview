@@ -58,6 +58,16 @@ contract SafeCoreAccountV4 is ReentrancyGuard, EIP712 {
     bytes32 public recoveryCommitment;
     uint256 public recoveryGeneration;
 
+    struct InitConfig {
+        address initialDevice;
+        address emergencyAddress1;
+        address emergencyAddress2;
+        bytes32 recoveryCommitment;
+        uint64 destinationChangeDelay;
+        address[] initialAssets;
+        uint192[] initialLimits;
+    }
+
     struct Budget {
         uint192 limit;
         uint192 spent;
@@ -114,34 +124,25 @@ contract SafeCoreAccountV4 is ReentrancyGuard, EIP712 {
     error AmountTooLarge();
     error NativeTransferFailed();
 
-    constructor(
-        address identity_,
-        address initialDevice,
-        address emergencyAddress1_,
-        address emergencyAddress2_,
-        bytes32 recoveryCommitment_,
-        uint64 destinationChangeDelay_,
-        address[] memory initialAssets,
-        uint192[] memory initialLimits
-    ) EIP712("SafeCoreAccountV4", "1") {
-        if (identity_ == address(0) || initialDevice == address(0)) revert ZeroAddress();
-        _validateDestinations(emergencyAddress1_, emergencyAddress2_);
-        if (recoveryCommitment_ == bytes32(0)) revert RecoveryNotArmed();
-        if (destinationChangeDelay_ < 1 days || destinationChangeDelay_ > 30 days) revert InvalidDelay();
-        if (initialAssets.length != initialLimits.length) revert ArrayLengthMismatch();
+    constructor(address identity_, InitConfig memory config) EIP712("SafeCoreAccountV4", "1") {
+        if (identity_ == address(0) || config.initialDevice == address(0)) revert ZeroAddress();
+        _validateDestinations(config.emergencyAddress1, config.emergencyAddress2);
+        if (config.recoveryCommitment == bytes32(0)) revert RecoveryNotArmed();
+        if (config.destinationChangeDelay < 1 days || config.destinationChangeDelay > 30 days) revert InvalidDelay();
+        if (config.initialAssets.length != config.initialLimits.length) revert ArrayLengthMismatch();
 
         identity = identity_;
-        emergencyAddress1 = emergencyAddress1_;
-        emergencyAddress2 = emergencyAddress2_;
-        recoveryCommitment = recoveryCommitment_;
+        emergencyAddress1 = config.emergencyAddress1;
+        emergencyAddress2 = config.emergencyAddress2;
+        recoveryCommitment = config.recoveryCommitment;
         recoveryGeneration = 1;
-        emergencyDestinationChangeDelay = destinationChangeDelay_;
-        authorizedDevice[initialDevice] = true;
+        emergencyDestinationChangeDelay = config.destinationChangeDelay;
+        authorizedDevice[config.initialDevice] = true;
         authorizedDeviceCount = 1;
 
         uint64 nowTs = uint64(block.timestamp);
-        for (uint256 i; i < initialAssets.length; ++i) {
-            _budgets[initialAssets[i]] = Budget(initialLimits[i], 0, nowTs);
+        for (uint256 i; i < config.initialAssets.length; ++i) {
+            _budgets[config.initialAssets[i]] = Budget(config.initialLimits[i], 0, nowTs);
         }
     }
 
@@ -304,8 +305,6 @@ contract SafeCoreAccountV4 is ReentrancyGuard, EIP712 {
     ) external {
         _validateDestinations(first, second);
         _verifyAndConsumeDeviceAction(device, DESTINATIONS_TYPEHASH, keccak256(abi.encode(first, second)), deadline);
-        // Signature is verified separately below because the generic helper must
-        // bind the actual signature bytes while keeping the action nonce common.
         uint256 nonce = deviceNonce[device] - 1;
         bytes32 digest = _hashTypedDataV4(keccak256(abi.encode(
             DESTINATIONS_TYPEHASH, address(this), device, first, second, nonce, deadline
