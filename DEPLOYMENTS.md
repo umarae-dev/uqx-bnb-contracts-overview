@@ -7,10 +7,14 @@ Deployment date: **18 August 2026**
 | Component | Address | Status |
 |---|---|---|
 | UQX Token | `0x68B1Eb4b344cc86750bd9Ac9e3f4F53B3aF48A28` | Deployed |
-| UQX Vesting | `0xB3d0CD3c7a73F20689223AdF6223F53A8C245326` | Deployed + mining pool funded |
+| UQX Vesting | `0xB3d0CD3c7a73F20689223AdF6223F53A8C245326` | Deployed + historical distribution pool funded |
 | TimelockController | `0x9dE032505A10F8A9d4D9445A0cEa9bF49320F569` | Deployed |
 | UQX Presale | `0xe2f3931Be4A5e1f7C8266C3312C015E426f625dD` | Deployed + presale pool funded |
 | Safe multisig | `0x7E7bAf58129dc3e1992ef2cAfbD981391D522C97` | Governance proposer |
+
+## Terminology note
+
+The deployed/public vesting source retains the historical enum identifier `AllocationType.Mining`. Current UQX product branding is **self-custody Web3 wallet**, not mining/rewards. This deployment record therefore uses **historical distribution pool** for the funded allocation while preserving the original Solidity identifier wherever exact source/ABI compatibility is being discussed.
 
 ## Supply
 
@@ -22,13 +26,13 @@ The token contract has no post-deployment mint function.
 
 ## Funded pools
 
-### Mining / reward vesting
+### Historical distribution vesting
 
 **250,000,000 UQX**
 
-Funded into the UQX Vesting contract.
+Funded into the UQX Vesting contract under the deployment's historical distribution architecture.
 
-The mining Merkle root is **not yet set**. No public documentation should imply that reward-account balances have already been finalized into the irreversible on-chain snapshot.
+The corresponding Merkle root is **not yet set** in the recorded deployment state. Public documentation should not imply that any earlier account-ledger balances have already been finalized into an irreversible on-chain snapshot.
 
 ### Presale
 
@@ -68,4 +72,4 @@ Before relying on any address for payment, purchase or token interaction, indepe
 
 The deployer address is public blockchain metadata. The corresponding private key is not public and must never be committed to this repository.
 
-This repository intentionally does not copy deployment scripts or environment configuration from the private production contracts repository.
+This repository intentionally does not publish secret-bearing deployment environment configuration.
