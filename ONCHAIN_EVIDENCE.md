@@ -4,6 +4,8 @@ This file is the canonical transaction-evidence page for the UQX token, presale,
 
 For canonical deployed addresses and funded-state documentation, see [`DEPLOYMENTS.md`](DEPLOYMENTS.md). This file focuses on successful public mainnet transactions so the same transaction detail does not need to be repeated in unrelated Zynost repositories.
 
+> **Historical terminology:** the deployed vesting source retains `AllocationType.Mining` for source/ABI compatibility. Current UQX product branding is the self-custody Web3 wallet. This evidence page therefore calls that funded bucket the **historical distribution pool** except when quoting the exact Solidity identifier.
+
 ## Network
 
 - BNB Smart Chain mainnet
@@ -70,7 +72,7 @@ https://bscscan.com/tx/0xa60cd2c97f6944a5b64b7a40bc2aee0dc20754bdb343597a1698356
 
 This is part of the documented timelock/Safe governance path. Current governance state and addresses belong in [`DEPLOYMENTS.md`](DEPLOYMENTS.md).
 
-## Reward-vesting funding
+## Historical distribution-pool funding
 
 Transaction:
 
@@ -84,6 +86,6 @@ The transaction records successful funding of the deployed UQX Vesting pool. The
 
 ## Verification boundary
 
-These hashes and contract addresses are public blockchain data. No customer identity, private key, seed phrase, production credential, unpublished Merkle allocation dataset or private operational record belongs in this file.
+These hashes and contract addresses are public blockchain data. No customer identity, private key, recovery phrase, production credential, unpublished Merkle allocation dataset or private operational record belongs in this file.
 
 Independently verify each transaction and current contract state on a BNB Smart Chain explorer before relying on it.
