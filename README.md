@@ -1,19 +1,27 @@
 # UQX BNB Contracts
 
-> **Open-source production-safe UQX smart contracts, tests and deployment utilities for BNB Smart Chain.**
+> **Production-safe UQX token, vesting and presale contracts for BNB Smart Chain.**
 
-This repository is a clean public extraction of the UQX smart-contract subsystem from the wider Zynost production stack. The Solidity contracts and UQX test suite are copied from production-safe source; production credentials, private environment files, unpublished allocation data and unrelated backend systems are deliberately excluded.
+This repository is the public on-chain reference for UQX, the self-custody Web3 wallet and token-utility layer of the Zynost ecosystem. It contains production-safe Solidity source, tests, deployment utilities and recorded BNB Smart Chain deployment evidence.
+
+The repository documents **deployed contract behavior**. It does not redefine historical ABI/source identifiers merely to match newer product terminology.
+
+## Current product context
+
+UQX is currently positioned as a **self-custody Web3 wallet**. The native Android wallet creates a standard EVM wallet on-device and can inspect supported UQX/presale state on BNB Smart Chain.
+
+Older product iterations used mining/reward terminology. The deployed vesting contract still contains the historical enum value `AllocationType.Mining` and corresponding constant names. Those names are retained because they are part of the published/deployed contract source and test surface. They should be read as **legacy allocation identifiers**, not as a statement that the current UQX product is a mining application.
 
 ## Included source
 
 ### Contracts
 
 - [`contracts/UqxToken.sol`](contracts/UqxToken.sol) — fixed-supply 1,000,000,000 UQX ERC-20/BEP-20 implementation;
-- [`contracts/UqxVesting.sol`](contracts/UqxVesting.sol) — Merkle-proof mining/presale vesting with separate allocation accounting, one-time root and emergency pause;
-- [`contracts/UqxPresale.sol`](contracts/UqxPresale.sol) — capped stablecoin presale with direct payment forwarding and buyer vesting;
-- [`contracts/Imports.sol`](contracts/Imports.sol) — Hardhat import shim for OpenZeppelin TimelockController and local test token artifacts.
+- [`contracts/UqxVesting.sol`](contracts/UqxVesting.sol) — Merkle-proof distribution/vesting contract with separate historical allocation accounting and one-time root publication;
+- [`contracts/UqxPresale.sol`](contracts/UqxPresale.sol) — capped stablecoin presale with buyer accounting and vesting;
+- [`contracts/Imports.sol`](contracts/Imports.sol) — Hardhat import shim for OpenZeppelin TimelockController and local test artifacts.
 
-### Production-derived tests
+### Tests
 
 - [`test/uqx/UqxToken.test.js`](test/uqx/UqxToken.test.js)
 - [`test/uqx/UqxVesting.test.js`](test/uqx/UqxVesting.test.js)
@@ -21,16 +29,16 @@ This repository is a clean public extraction of the UQX smart-contract subsystem
 - [`test/uqx/UqxVestingTimelock.test.js`](test/uqx/UqxVestingTimelock.test.js)
 - [`test/uqx/merkleHelper.js`](test/uqx/merkleHelper.js)
 
-### Production UQX utilities
+### Utilities
 
 - [`scripts/uqx/deploy.js`](scripts/uqx/deploy.js) — token + vesting + timelock deployment flow;
 - [`scripts/uqx/deployPresale.js`](scripts/uqx/deployPresale.js) — presale deployment/allowlist/timelock handoff;
-- [`scripts/uqx/merkle.js`](scripts/uqx/merkle.js) — production Merkle leaf/tree implementation;
+- [`scripts/uqx/merkle.js`](scripts/uqx/merkle.js) — Merkle leaf/tree implementation;
 - [`scripts/uqx/checkTx.js`](scripts/uqx/checkTx.js) — transaction receipt inspection;
 - [`scripts/uqx/checkToken.js`](scripts/uqx/checkToken.js) — token metadata/balance inspection;
-- [`scripts/check-public-repo.js`](scripts/check-public-repo.js) — public-source guard against obvious credential material and forbidden secret files.
+- [`scripts/check-public-repo.js`](scripts/check-public-repo.js) — public-source credential/sensitive-file guard.
 
-No real private key or production credential is stored in these files. Deployment scripts read sensitive values only from environment variables.
+No private key or production credential belongs in these files. Deployment scripts read sensitive values from environment variables.
 
 ## Quick start
 
@@ -45,9 +53,9 @@ npm run compile
 npm test
 ```
 
-Local compile/tests require **no production secret**.
+Local compile/tests require no production credential.
 
-## Architecture
+## Contract architecture
 
 ```text
                          UqxToken
@@ -56,10 +64,8 @@ Local compile/tests require **no production secret**.
               ┌────────────┴────────────┐
               ▼                         ▼
          UqxVesting                 UqxPresale
-   mining + presale Merkle       direct buyer accounting
-   20% immediate unlock         fixed on-chain price
-   240d mining remainder        150M hard cap
-   180d presale remainder       180d vesting
+   historical distribution        buyer accounting
+      + vesting ledger            + presale vesting
               │                         │
               └────────────┬────────────┘
                            ▼
@@ -69,7 +75,24 @@ Local compile/tests require **no production secret**.
                     Safe multisig
 ```
 
-The token itself has no owner, mint, pause or blacklist function. Custom distribution contracts carry owner-gated emergency/administrative functions and are intended to sit behind delayed multisig/timelock governance.
+The token itself has no owner, mint, token-level pause or blacklist function. Custom distribution contracts carry narrowly scoped administrative/emergency functions and are intended to sit behind delayed multisig/timelock governance.
+
+## Historical allocation identifier
+
+`UqxVesting.sol` currently declares:
+
+```solidity
+enum AllocationType { Mining, Presale }
+```
+
+`Mining` is retained exactly because changing a deployed/public source identifier would create an inaccurate representation of the contract history and could break tooling/tests that depend on the existing ABI/source semantics.
+
+For current product documentation:
+
+- treat `AllocationType.Mining` as the **legacy community/distribution allocation type**;
+- do not market UQX as a mining or reward-session product;
+- do not rewrite the deployed Solidity source merely for branding;
+- if a future distribution contract is deployed, new terminology can be designed in that new contract version without falsifying the existing deployment.
 
 ## Security invariants covered by tests
 
@@ -86,37 +109,31 @@ The token itself has no owner, mint, pause or blacklist function. Custom distrib
 - root can be set only by owner and only once;
 - zero root and past launch timestamps rejected;
 - nothing claimable before launch;
-- 20% immediate unlock;
-- mining remainder vests over 240 days;
-- presale remainder vests over 180 days;
+- immediate-unlock and time-based vesting arithmetic enforced by contract logic;
+- historical allocation types remain separately accounted;
 - invalid proofs and tampered allocations rejected;
-- mining/presale claims for the same wallet remain independent;
 - many-entry Merkle trees supported;
-- pause blocks claims without changing vesting progress.
+- pause blocks claims without rewriting elapsed vesting time.
 
 ### Timelock governance
 
 - vesting ownership can sit behind OpenZeppelin `TimelockController`;
-- deployer loses direct owner access;
-- only proposer/multisig can schedule privileged actions;
-- scheduled action cannot execute before delay;
-- execution can be permissionless after the configured delay;
-- pause follows the same delayed governance path.
+- deployer loses direct owner access after handoff;
+- privileged actions follow the configured proposer/executor path;
+- scheduled actions cannot execute before the configured delay.
 
 ### UqxPresale
 
 - only allowlisted payment tokens accepted;
-- payment is forwarded directly to the configured recipient;
-- purchased UQX allocation is recorded on-chain;
-- 20% immediate + 180-day vesting;
-- subsequent purchases keep the original vesting clock;
-- 150M UQX cap enforced;
-- pause blocks buy/claim;
-- unsold withdrawal remains owner-gated and preserves sold allocation backing.
+- payment forwarding uses the configured recipient;
+- purchased allocation is recorded on-chain;
+- the configured hard cap is enforced;
+- pause blocks buy/claim paths;
+- unsold withdrawal remains owner-gated and must preserve sold-allocation backing.
 
 ## BNB Smart Chain deployment evidence
 
-Public deployment documentation records the following BSC mainnet deployment dated **18 August 2026**:
+Public deployment documentation records the BSC mainnet deployment dated **18 August 2026**:
 
 | Component | Address |
 |---|---|
@@ -126,100 +143,56 @@ Public deployment documentation records the following BSC mainnet deployment dat
 | UQX Presale | `0xe2f3931Be4A5e1f7C8266C3312C015E426f625dD` |
 | Safe multisig | `0x7E7bAf58129dc3e1992ef2cAfbD981391D522C97` |
 
-See [`DEPLOYMENTS.md`](DEPLOYMENTS.md) for recorded funding/governance state and caveats.
+See [`DEPLOYMENTS.md`](DEPLOYMENTS.md) and [`ONCHAIN_EVIDENCE.md`](ONCHAIN_EVIDENCE.md) for the recorded state and verification boundaries.
 
-Documented state includes:
+The documented funding state may use historical distribution terminology because that is how the deployed contract/accounting path was originally defined. That terminology is not current UQX app branding.
 
-- total supply: 1,000,000,000 UQX;
-- mining/reward vesting funded: 250M UQX;
-- presale funded: 150M UQX;
-- mining Merkle root not yet set at the documented state;
-- remaining treasury-held tokenomics buckets are not represented as already having dedicated distribution contracts unless separately documented.
+## UQX wallet relationship
 
-## Environment and deployment
+The native UQX application is a separate trust boundary from these contracts:
 
-Compilation and local tests do not need `.env`.
-
-For your own deployment/inspection environment:
-
-```bash
-cp .env.example .env
+```text
+Android device
+   │
+   ├── BIP39 recovery phrase + EVM keypair (device-owned)
+   │
+   └── public wallet address
+             │
+             ▼
+      BNB Smart Chain
+             │
+             ├── UQX token balance
+             └── supported presale / vesting state
 ```
 
-Fill values locally. **Never commit the resulting `.env`.** The template contains variable names/placeholders only.
-
-Example production-derived commands:
-
-```bash
-npx hardhat run scripts/uqx/deploy.js --network bscTestnet
-npx hardhat run scripts/uqx/deploy.js --network bsc
-npx hardhat run scripts/uqx/deployPresale.js --network bsc
-```
-
-These commands can spend real BNB or alter live governance when pointed at mainnet. Review addresses, signer choice, funding and chain before executing them.
+The current reviewed native BNB client is read-only. This contract repository therefore does not imply that the Android application currently signs or broadcasts arbitrary transactions.
 
 ## Public / private boundary
 
 Public here:
 
 - production-safe UQX contract source;
-- production UQX tests/helpers;
-- production UQX scripts without secret values;
+- UQX tests/helpers;
+- deployment utilities without secret values;
 - public deployment addresses/state;
-- independent Hardhat packaging, CI and security guard.
+- Hardhat packaging, CI and security guard.
 
 Never published here:
 
-- real `.env` files;
-- deployer/Safe private keys or seed phrases;
+- `.env` files containing live credentials;
+- deployer/Safe private keys or recovery phrases;
 - private RPC credentials;
 - treasury operational credentials;
-- API/backend credentials;
-- database/user data;
-- unpublished Merkle allocation datasets;
-- private operational/incident runbooks;
-- unrelated commercial backend infrastructure.
+- backend/database/user credentials;
+- private allocation datasets;
+- operational incident runbooks.
 
-See [`PUBLIC_PRIVATE_BOUNDARY.md`](PUBLIC_PRIVATE_BOUNDARY.md) and [`PROVENANCE.md`](PROVENANCE.md).
+See [`PUBLIC_PRIVATE_BOUNDARY.md`](PUBLIC_PRIVATE_BOUNDARY.md), [`PROVENANCE.md`](PROVENANCE.md) and [`SECURITY.md`](SECURITY.md).
 
 ## CI
 
-GitHub Actions performs:
-
-```text
-node scripts/check-public-repo.js
-npm install
-npm audit --omit=dev --audit-level=high
-npm run compile
-npm test
-```
-
-The workflow runs on pushes, pull requests and manual dispatch. It intentionally contains no deployment credential and never deploys to a live chain. The UQX test suite currently contains 30 production-derived tests covering token, vesting, presale and timelock behavior.
-
-The runtime dependency audit is blocking. The copied production test harness remains on Hardhat 2 so the tests are not rewritten merely to satisfy a major tooling migration; known development-tool advisories inherited from the Hardhat-2 dependency graph are described transparently in [`SECURITY.md`](SECURITY.md).
-
-## Security
-
-Do not put a real credential in a public issue, commit, pull request, workflow, `.env.example`, test fixture or deployment example. Public contract addresses and transaction hashes are not secrets.
-
-See [`SECURITY.md`](SECURITY.md) for trust assumptions, dependency-audit scope and responsible disclosure guidance.
-
-## Provenance
-
-The wider production system predates this public extraction. Public Git history reflects the extraction/maintenance timeline and is not backdated to imitate private development history.
-
-See [`PROVENANCE.md`](PROVENANCE.md).
-
-## Release / judge verification
-
-See [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md) for the exact clean-install, secret-safety, compile/test, source-integrity and BNB-evidence checks used before submission.
-
-## License
-
-MIT. See [`LICENSE`](LICENSE).
-
-Open-source source code does not grant rights to Zynost/UQX trademarks or branding.
+GitHub Actions runs the public-source guard, dependency installation/audit, compile and test workflow. It contains no deployment credential and does not deploy to BNB Smart Chain.
 
 ## Disclaimer
 
-This repository is software and technical documentation, not financial advice. It does not promise token price appreciation, investment returns or future market performance. Independently verify current chain state before interacting with deployed contracts.
+This repository is software and technical documentation, not financial advice. Contract state, token balances and deployment configuration should be independently verified before interacting with deployed contracts.
