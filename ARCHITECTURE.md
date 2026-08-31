@@ -8,27 +8,33 @@ Treasury
   ├── 250M UQX ──> UQX Vesting
   │                    │
   │                    ├── Merkle proof verification
-  │                    ├── mining/presale snapshot allocations
+  │                    ├── historical allocation-type accounting
   │                    └── time-based claims
   │
   ├── 150M UQX ──> UQX Presale
   │                    │
   │                    ├── accepted stablecoin payment
   │                    ├── hard allocation cap
-  │                    └── buyer-specific linear vesting
+  │                    └── buyer-specific vesting
   │
   └── 600M UQX ──> treasury-held remaining allocations
 
 Safe multisig
    │ proposer
    ▼
-TimelockController (~48h)
+TimelockController
    │ owner authority
    ├──> UQX Vesting
    └──> UQX Presale
 
 UQX Token itself has no owner/admin interface.
 ```
+
+## Current product relationship
+
+The current UQX application is positioned as a **self-custody Web3 wallet**. Contract distribution identifiers describe the deployed token/distribution architecture; they do not define the present app category.
+
+The deployed/public `UqxVesting` source retains `AllocationType.Mining`. That value is a historical compatibility identifier. Renaming it in the published source would misrepresent the deployment and can break ABI/source-dependent tooling, so the contract name remains unchanged while current product documentation no longer markets UQX as a mining application.
 
 ## Base token trust model
 
@@ -48,17 +54,13 @@ This reduces the authority attached to any operational governance key after depl
 
 ### UQX Vesting
 
-The vesting contract is intended for claimable allocations proven by Merkle proof.
-
-The leaf commits to:
+The vesting contract handles claimable allocations proven by Merkle proof. Each leaf commits to:
 
 - claimant address;
 - total allocation;
 - allocation type.
 
-Mining and presale allocation types maintain separate cumulative claimed state.
-
-The root is one-time-set and the vesting start cannot be configured in the past.
+Historical allocation types maintain separate cumulative claimed state. The root is one-time-set and the vesting start cannot be configured in the past.
 
 ### UQX Presale
 
@@ -71,15 +73,15 @@ Buyer
   └── firstPurchaseAt
 ```
 
-A user's first purchase starts their vesting clock. Later purchases increase the same cumulative allocation.
-
-The contract forwards accepted payment assets to the configured funds recipient during purchase rather than intentionally accumulating stablecoin balances inside the sale contract.
+A buyer's first purchase establishes the applicable vesting clock; later purchases increase the cumulative allocation under the contract's rules. Accepted payment assets are forwarded to the configured recipient rather than intentionally held as the sale contract's operating balance.
 
 ## Vesting math
 
-Both current distribution mechanisms use an immediate + linear schedule.
+The currently deployed/public source contains two allocation schedules:
 
-### Mining snapshot allocation
+### Historical community/distribution allocation
+
+Contract identifier: `AllocationType.Mining`
 
 - immediate: 20%
 - remaining linear: 80%
@@ -97,9 +99,9 @@ The claim function transfers only:
 vested amount - already claimed amount
 ```
 
-## Governance path
+The first schedule's Solidity identifier is retained for compatibility and historical accuracy. Current UQX product branding does not use mining/reward terminology.
 
-The intended privileged-action path is:
+## Governance path
 
 ```text
 Safe multisig
@@ -116,34 +118,41 @@ Execute queued action
 Distribution contract
 ```
 
-The timelock controls vesting and presale owner functions. This makes actions such as root-setting, pause/unpause and accepted-payment-token configuration observable before execution rather than instant single-key actions.
+The timelock controls vesting and presale owner functions so privileged distribution actions follow the configured delayed-governance path rather than an instant single-key path.
 
 ## Mainnet state
 
-Current production deployment:
+The recorded production deployment includes the token, vesting contract, timelock and presale contract, with ownership routing documented in `DEPLOYMENTS.md` and chain evidence documented in `ONCHAIN_EVIDENCE.md`.
 
-- token deployed;
-- vesting deployed;
-- timelock deployed;
-- presale deployed;
-- vesting ownership routed through timelock;
-- presale ownership routed through timelock;
-- mining pool funded;
-- presale pool funded;
-- mining Merkle root not yet committed.
+Where older deployment records use terms such as “mining pool” or “mining Merkle root,” read those as the historical `AllocationType.Mining` distribution bucket. They should not be carried forward as current UQX consumer branding.
 
-## Application integration
+## Native wallet integration
 
-The native UQX Android wallet reads contract state directly from BNB Smart Chain for the user's self-custody address.
+The UQX Android wallet has a separate trust boundary from contract governance:
 
-This includes token balance and presale position information. Reward-account balances remain a distinct server-side accounting surface until a defined on-chain distribution/snapshot transition.
+```text
+Android device
+   │
+   ├── BIP39 mnemonic + EVM keypair
+   ├── Android Keystore-backed local storage
+   └── public wallet address
+            │
+            ▼
+      BNB Smart Chain
+            │
+            ├── UQX balance
+            └── supported presale state
+```
+
+The reviewed native BNB client uses read-only chain calls. Wallet credentials remain device-owned and are not required by the application backend for these reads.
 
 ## Security design principle
 
-The architecture favors **limited authority over sophisticated administrator powers**:
+The architecture favors limited authority and explicit trust boundaries:
 
 - keep the base token simple;
 - isolate custom distribution logic;
-- put emergency controls where custom logic lives;
-- put privileged distribution operations behind delayed governance;
-- keep self-custody user keys outside the backend.
+- place emergency controls where custom logic exists;
+- route privileged distribution operations through delayed governance;
+- keep self-custody wallet credentials outside the backend;
+- preserve deployed source/ABI history instead of cosmetically rewriting contract identifiers.
