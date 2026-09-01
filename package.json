@@ -8,6 +8,7 @@
     "compile": "hardhat compile",
     "test": "hardhat test test/uqx/*.test.js",
     "test:uqx": "hardhat test test/uqx/*.test.js",
+    "deploy:safecore": "hardhat run scripts/deploy-safecore-v4.js",
     "check:public": "node scripts/check-public-repo.js",
     "clean": "hardhat clean"
   },
