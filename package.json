@@ -9,6 +9,8 @@
     "test": "hardhat test test/uqx/*.test.js",
     "test:uqx": "hardhat test test/uqx/*.test.js",
     "deploy:safecore": "hardhat run scripts/deploy-safecore-v4.js",
+    "relayer:check": "node --check relayer/server.js",
+    "relayer:start": "node relayer/server.js",
     "check:public": "node scripts/check-public-repo.js",
     "clean": "hardhat clean"
   },
