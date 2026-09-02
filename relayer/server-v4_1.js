@@ -26,6 +26,7 @@ const ACCOUNT_SELECTORS = new Set([
   selector("emergencyRescue(bytes32,address[],uint256[],address[],uint256,bytes)"),
   selector("requestEmergencyDestinationsChange(address,address,address,uint256,bytes)"),
   selector("applyEmergencyDestinationsChange()"),
+  selector("cancelEmergencyDestinationsChange(address,uint256,bytes)"),
   selector("relayRevokeDevice(address,address,uint256,bytes)"),
   selector("relayArmRecovery(address,bytes32,uint256,bytes)"),
   selector("requestBudgetChange(address,address,uint192,uint256,bytes)"),
@@ -61,8 +62,6 @@ function json(res, status, body) {
 }
 
 function clientIp(req) {
-  // Forwarding headers are untrusted unless an HTTPS edge is explicitly enabled
-  // and configured to delete client-provided forwarding headers first.
   if (TRUST_PROXY) {
     const forwarded = String(req.headers["x-forwarded-for"] || "").split(",").map((x) => x.trim()).filter(Boolean);
     if (forwarded.length) return forwarded.at(-1);
@@ -140,11 +139,8 @@ function withRelayNonceLock(fn) {
   if (pendingRelays >= MAX_PENDING_RELAYS) return Promise.reject(new Error("relayer_overloaded"));
   pendingRelays += 1;
   const wrapped = async () => {
-    try {
-      return await fn();
-    } finally {
-      pendingRelays -= 1;
-    }
+    try { return await fn(); }
+    finally { pendingRelays -= 1; }
   };
   const next = relayQueue.then(wrapped, wrapped);
   relayQueue = next.catch(() => undefined);
@@ -155,9 +151,6 @@ async function relay(target, data) {
   return withRelayNonceLock(async () => {
     await verifyFactory();
     await validateTargetAndSelector(target, data);
-
-    // Exact simulation rejects invalid signatures, stale nonces/deadlines,
-    // unauthorized devices and budget violations before relayer gas is spent.
     await provider.call({ from: wallet.address, to: target, data, value: 0n });
     const estimated = await provider.estimateGas({ from: wallet.address, to: target, data, value: 0n });
     if (estimated <= 0n || estimated > MAX_GAS) throw new Error("gas_limit_rejected");
@@ -196,7 +189,7 @@ const server = http.createServer(async (req, res) => {
       const factoryCode = await provider.getCode(factory);
       return json(res, 200, {
         status: network.chainId === CHAIN_ID && factoryCode !== "0x" ? "ready" : "not_ready",
-        chain_id: Number(network.chainId), factory, relayer: wallet.address, protocol: 4, implementation: "4.1",
+        chain_id: Number(network.chainId), factory, relayer: wallet.address, protocol: 4, implementation: "4.2",
       });
     }
     if (req.method === "POST" && req.url === "/relay") {
@@ -206,15 +199,12 @@ const server = http.createServer(async (req, res) => {
     }
     return json(res, 404, { error: "not_found" });
   } catch (error) {
-    // Never log request calldata: emergency rescue calldata includes the one-time
-    // Recovery Card secret and signed payloads may contain privacy-sensitive data.
     const code = publicError(error);
     const status = code === "request_too_large" ? 413 : code === "relayer_overloaded" ? 503 : 400;
     return json(res, status, { error: code });
   }
 });
 
-// Bound resource exposure against slowloris and abusive keep-alive clients.
 server.requestTimeout = 15_000;
 server.headersTimeout = 10_000;
 server.keepAliveTimeout = 5_000;
@@ -223,7 +213,7 @@ server.maxRequestsPerSocket = 100;
 async function boot() {
   await verifyFactory();
   const balance = await provider.getBalance(wallet.address);
-  console.log(`SafeCore V4.1 relayer ready on chain ${CHAIN_ID}.`);
+  console.log(`SafeCore V4.2 relayer ready on chain ${CHAIN_ID}.`);
   console.log(`Factory: ${factory}`);
   console.log(`Relayer: ${wallet.address}`);
   console.log(`Relayer balance: ${ethers.formatEther(balance)} BNB`);
