@@ -12,9 +12,11 @@ const defaultCompiler = {
 const sizeFocusedSafeCoreFactoryCompiler = {
   version: "0.8.23",
   settings: {
-    // SafeCoreFactoryV4 embeds SafeCore account creation bytecode. Favor
-    // deployable factory bytecode size without changing UQX compiler settings.
-    optimizer: { enabled: true, runs: 1 }
+    // SafeCoreFactoryV4 embeds the hardened SafeCore account creation bytecode.
+    // Favor EIP-170 deployability without changing UQX token/presale/vesting
+    // compiler settings or bypassing Hardhat/mainnet contract-size limits.
+    optimizer: { enabled: true, runs: 1 },
+    viaIR: true
   }
 };
 
