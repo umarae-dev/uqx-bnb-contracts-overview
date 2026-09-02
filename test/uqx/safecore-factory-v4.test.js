@@ -66,7 +66,7 @@ describe("SafeCoreFactoryV4", function () {
     await expect(factory.connect(relayer).createAccountFor(identity.address, config, deadline, sig)).to.be.revertedWithCustomError(factory, "AccountAlreadyExists");
   });
 
-  it("survives loss of the initially committed successor phone without giving seed-only attacker replacement authority", async function () {
+  it("blocks seed-only premature successor creation and survives loss of the initially committed successor phone", async function () {
     const { factory, identity, deviceA, deviceB, deviceC, safe1, safe2, relayer, attacker, successorAuthority, secret, config } = await fixture();
     const firstHash = await factory.configurationHash(config); let deadline = BigInt((await time.latest()) + 3600);
     await factory.connect(relayer).createAccountFor(identity.address, config, deadline, await createSignature(factory, identity, firstHash, 0n, deadline));
@@ -86,16 +86,23 @@ describe("SafeCoreFactoryV4", function () {
       await rescueSignature(oldAccount, identity, rescuePayload, initialHash, successorAuthority.address, deadline),
     );
     expect(await oldAccount.successorConfigHash()).to.equal(initialHash);
+    expect(await oldAccount.successorCreationAuthorizationHash()).to.equal(ethers.ZeroHash);
 
-    // Device B is now considered lost before factory replacement. Seed-only
-    // attacker still cannot change the committed replacement configuration.
-    const attackerConfig = { ...initialSuccessor, initialDevice: attacker.address };
+    // A seed-compromised attacker knows every public config field and can sign
+    // the identity digest, but cannot prematurely instantiate the exact Device-B
+    // successor before the NEW paper authority authorizes it.
     let nonce = await factory.creationNonce(identity.address); deadline = BigInt((await time.latest()) + 3600);
+    await expect(
+      factory.connect(attacker).createAccountFor(identity.address, initialSuccessor, deadline, await createSignature(factory, identity, initialHash, nonce, deadline)),
+    ).to.be.revertedWithCustomError(factory, "ReplacementNotAuthorized");
+
+    // Nor can the seed-only attacker substitute its own Device Key.
+    const attackerConfig = { ...initialSuccessor, initialDevice: attacker.address };
     const attackerHash = await factory.configurationHash(attackerConfig);
     await expect(factory.connect(attacker).createAccountFor(identity.address, attackerConfig, deadline, await createSignature(factory, identity, attackerHash, nonce, deadline)))
       .to.be.revertedWithCustomError(factory, "ReplacementConfigMismatch");
 
-    // NEW paper-card authority rebinds only the Device Key to Device C.
+    // NEW paper-card authority rebinds/authorizes only the Device Key to Device C.
     const network = await ethers.provider.getNetwork();
     const accountDomain = { name: "SafeCoreAccountV4", version: "1", chainId: network.chainId, verifyingContract: oldAddress };
     const rebindTypes = { RebindSuccessorDevice: [
@@ -109,6 +116,7 @@ describe("SafeCoreFactoryV4", function () {
     const reboundSuccessor = { ...initialSuccessor, initialDevice: deviceC.address };
     const reboundHash = await factory.configurationHash(reboundSuccessor);
     expect(await oldAccount.successorConfigHash()).to.equal(reboundHash);
+    expect(await oldAccount.successorCreationAuthorizationHash()).to.equal(reboundHash);
 
     nonce = await factory.creationNonce(identity.address); deadline = BigInt((await time.latest()) + 3600);
     await factory.connect(relayer).createAccountFor(identity.address, reboundSuccessor, deadline, await createSignature(factory, identity, reboundHash, nonce, deadline));
