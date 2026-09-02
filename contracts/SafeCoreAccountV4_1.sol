@@ -12,7 +12,8 @@ import "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 /// @dev Relayers pay gas but are never authority. Normal value movement requires
 ///      an authorized device signature. Lost-phone rescue requires the recovery
 ///      identity signature + a one-time paper secret and remains restricted to
-///      the two pre-registered emergency destinations.
+///      the two pre-registered emergency destinations. Consuming that one-time
+///      recovery permanently retires this account from normal spending.
 contract SafeCoreAccountV4_1 is ReentrancyGuard, EIP712 {
     using SafeERC20 for IERC20;
     using ECDSA for bytes32;
@@ -40,9 +41,6 @@ contract SafeCoreAccountV4_1 is ReentrancyGuard, EIP712 {
     bytes32 private constant REVOKE_TYPEHASH = keccak256(
         "RevokeDevice(address account,address device,address target,uint256 nonce,uint256 deadline)"
     );
-    bytes32 private constant ARM_RECOVERY_TYPEHASH = keccak256(
-        "ArmRecovery(address account,address device,bytes32 commitment,uint256 nonce,uint256 deadline)"
-    );
     bytes32 private constant BUDGET_TYPEHASH = keccak256(
         "ChangeBudget(address account,address device,address asset,uint256 newLimit,uint256 nonce,uint256 deadline)"
     );
@@ -57,8 +55,6 @@ contract SafeCoreAccountV4_1 is ReentrancyGuard, EIP712 {
     uint256 public identityNonce;
     uint256 public enrollmentNonce;
 
-    // Enumerable trusted-device registry. The mapping remains the authority;
-    // this registry exists so clients can reliably display and revoke devices.
     address[] private _authorizedDevices;
     mapping(address => uint256) private _authorizedDeviceIndexPlusOne;
 
@@ -108,7 +104,6 @@ contract SafeCoreAccountV4_1 is ReentrancyGuard, EIP712 {
     event DeviceActivated(address indexed newDevice, address indexed approvingDevice);
     event DeviceRevoked(address indexed device, address indexed approvedBy);
     event EmergencyRescueExecuted(address indexed relayer, uint256 indexed generation, address indexed destination, address asset, uint256 amount);
-    event RecoveryCommitmentArmed(bytes32 indexed commitment, uint256 indexed generation, address indexed approvedBy);
     event EmergencyDestinationsChangeRequested(address indexed first, address indexed second, uint256 executableAt, address approvedBy);
     event EmergencyDestinationsChanged(address indexed first, address indexed second);
     event BudgetReduced(address indexed asset, uint256 oldLimit, uint256 newLimit);
@@ -129,7 +124,6 @@ contract SafeCoreAccountV4_1 is ReentrancyGuard, EIP712 {
     error PairingMismatch();
     error InvalidRecoverySecret();
     error RecoveryNotArmed();
-    error RecoveryAlreadyArmed();
     error EmergencyDestinationOnly();
     error InvalidEmergencyDestinations();
     error DestinationChangeMissing();
@@ -175,8 +169,6 @@ contract SafeCoreAccountV4_1 is ReentrancyGuard, EIP712 {
     }
 
     receive() external payable { emit Deposited(msg.sender, msg.value); }
-
-    // ---------------------- gasless device enrollment ----------------------
 
     function requestDeviceEnrollment(
         address newDevice,
@@ -224,8 +216,6 @@ contract SafeCoreAccountV4_1 is ReentrancyGuard, EIP712 {
         emit DeviceActivated(newDevice, approvingDevice);
     }
 
-    // ------------------------- gasless spending ----------------------------
-
     function relaySpend(
         address device,
         address asset,
@@ -258,8 +248,6 @@ contract SafeCoreAccountV4_1 is ReentrancyGuard, EIP712 {
         emit RelayedSpend(msg.sender, device, asset, to, amount, nonce);
     }
 
-    // ----------------------- gasless lost-phone rescue ---------------------
-
     function emergencyRescue(
         bytes32 paperSecret,
         address[] calldata assets,
@@ -288,7 +276,9 @@ contract SafeCoreAccountV4_1 is ReentrancyGuard, EIP712 {
         )));
         if (digest.recover(identitySignature) != identity) revert InvalidSignature();
 
-        // Burn before external interactions. Any revert restores it atomically.
+        // The one-time recovery commitment doubles as the permanent account
+        // retirement sentinel. Burn before external interactions; any revert
+        // restores it atomically. Once zero, _consumeBudget can never spend.
         recoveryCommitment = bytes32(0);
 
         for (uint256 i; i < length; ++i) {
@@ -312,8 +302,6 @@ contract SafeCoreAccountV4_1 is ReentrancyGuard, EIP712 {
             emit EmergencyRescueExecuted(msg.sender, generation, to, asset, amount);
         }
     }
-
-    // --------------------- gasless security management ---------------------
 
     function requestEmergencyDestinationsChange(
         address device,
@@ -364,32 +352,6 @@ contract SafeCoreAccountV4_1 is ReentrancyGuard, EIP712 {
         emit DeviceRevoked(target, approvingDevice);
     }
 
-    /// @notice Arms a new one-time Recovery Card only after the previous card
-    ///         has been consumed by emergency rescue. An authorized stolen phone
-    ///         cannot silently replace a still-valid recovery commitment.
-    function relayArmRecovery(
-        address device,
-        bytes32 commitment,
-        uint256 deadline,
-        bytes calldata signature
-    ) external {
-        if (commitment == bytes32(0)) revert RecoveryNotArmed();
-        if (recoveryCommitment != bytes32(0)) revert RecoveryAlreadyArmed();
-        if (!authorizedDevice[device]) revert NotAuthorized();
-        _checkDeadline(deadline);
-        uint256 nonce = deviceNonce[device]++;
-        bytes32 digest = _hashTypedDataV4(keccak256(abi.encode(
-            ARM_RECOVERY_TYPEHASH, address(this), device, commitment, nonce, deadline
-        )));
-        if (digest.recover(signature) != device) revert InvalidSignature();
-        recoveryCommitment = commitment;
-        recoveryGeneration += 1;
-        emit RecoveryCommitmentArmed(commitment, recoveryGeneration, device);
-    }
-
-    /// @notice Signed budget policy. Tightening applies immediately. Relaxing a
-    /// limit is delayed by the same immutable security delay chosen at account
-    /// creation. A later signed tightening also cancels any pending increase.
     function requestBudgetChange(
         address device,
         address asset,
@@ -450,8 +412,6 @@ contract SafeCoreAccountV4_1 is ReentrancyGuard, EIP712 {
         emit BudgetIncreaseCancelled(asset, msg.sender);
     }
 
-    // ------------------------------- views ---------------------------------
-
     function budgetOf(address asset) external view returns (uint256 limit, uint256 spent, uint256 remaining, uint256 epochStartedAt) {
         Budget memory b = _budgets[asset];
         uint192 effectiveSpent = _effectiveSpent(b);
@@ -483,8 +443,6 @@ contract SafeCoreAccountV4_1 is ReentrancyGuard, EIP712 {
     function rescuePayloadHash(address[] calldata assets, uint256[] calldata amounts, address[] calldata destinations) external pure returns (bytes32) {
         return keccak256(abi.encode(assets, amounts, destinations));
     }
-
-    // ----------------------------- internals -------------------------------
 
     function _addAuthorizedDevice(address device) private {
         if (device == address(0)) revert ZeroAddress();
@@ -526,6 +484,10 @@ contract SafeCoreAccountV4_1 is ReentrancyGuard, EIP712 {
     }
 
     function _consumeBudget(address asset, uint256 amount) private {
+        // Emergency rescue is terminal for this account. The zero commitment is
+        // the retirement sentinel and permanently blocks every normal spend,
+        // including a direct transaction from a previously trusted/lost phone.
+        if (recoveryCommitment == bytes32(0)) revert RecoveryNotArmed();
         if (amount == 0) revert ZeroAmount();
         if (amount > type(uint192).max) revert AmountTooLarge();
         _rollEpoch(asset);
