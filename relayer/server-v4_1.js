@@ -8,7 +8,8 @@ const RPC_URL = process.env.SAFECORE_RPC_URL || process.env.BSC_DEPLOY_RPC_URL |
 const FACTORY_ADDRESS = (process.env.SAFECORE_FACTORY_ADDRESS || "").trim();
 const RELAYER_PRIVATE_KEY = (process.env.SAFECORE_RELAYER_PRIVATE_KEY || "").trim();
 const MAX_BODY_BYTES = 64 * 1024;
-const MAX_GAS = BigInt(process.env.SAFECORE_RELAYER_MAX_GAS || "1200000");
+const ACCOUNT_MAX_GAS = BigInt(process.env.SAFECORE_RELAYER_ACCOUNT_MAX_GAS || process.env.SAFECORE_RELAYER_MAX_GAS || "1200000");
+const FACTORY_MAX_GAS = BigInt(process.env.SAFECORE_RELAYER_FACTORY_MAX_GAS || "8000000");
 const RATE_LIMIT_PER_MINUTE = Number(process.env.SAFECORE_RELAYER_RATE_LIMIT || "30");
 const MAX_PENDING_RELAYS = Number(process.env.SAFECORE_RELAYER_MAX_PENDING || "64");
 const TRUST_PROXY = /^(1|true|yes)$/i.test(String(process.env.SAFECORE_TRUST_PROXY || "false"));
@@ -18,12 +19,15 @@ const hexPattern = /^0x[0-9a-fA-F]*$/;
 const selector = (signature) => ethers.id(signature).slice(0, 10).toLowerCase();
 const FACTORY_CREATE_SELECTOR = selector("createAccountFor(address,(address,address,address,bytes32,uint64,address[],uint192[]),uint256,bytes)");
 const SWEEP_RETIRED_SELECTOR = selector("sweepRetired(address,address)");
+const REBIND_SUCCESSOR_SELECTOR = selector("rebindSuccessorDevice(address,uint256,bytes)");
+const RETIRED_SELECTORS = new Set([SWEEP_RETIRED_SELECTOR, REBIND_SUCCESSOR_SELECTOR]);
 const ACCOUNT_SELECTORS = new Set([
   selector("requestDeviceEnrollment(address,bytes32,uint256,bytes,bytes)"),
   selector("activateDeviceWithApproval(address,bytes32,address,uint256,bytes)"),
   selector("relaySpend(address,address,address,uint256,uint256,bytes)"),
-  selector("emergencyRescue(bytes32,bytes,address,bytes32,uint256,bytes)"),
+  selector("emergencyRescue(bytes32,bytes,address,bytes32,address,uint256,bytes)"),
   SWEEP_RETIRED_SELECTOR,
+  REBIND_SUCCESSOR_SELECTOR,
   selector("requestEmergencyDestinationsChange(address,address,address,uint256,bytes)"),
   selector("applyEmergencyDestinationsChange()"),
   selector("cancelEmergencyDestinationsChange(address,uint256,bytes)"),
@@ -44,6 +48,8 @@ if (!/^0x[0-9a-fA-F]{64}$/.test(RELAYER_PRIVATE_KEY)) throw new Error("SAFECORE_
 if (!Number.isSafeInteger(PORT) || PORT < 1 || PORT > 65535) throw new Error("Invalid PORT.");
 if (!Number.isFinite(RATE_LIMIT_PER_MINUTE) || RATE_LIMIT_PER_MINUTE < 1 || RATE_LIMIT_PER_MINUTE > 600) throw new Error("Invalid SAFECORE_RELAYER_RATE_LIMIT.");
 if (!Number.isSafeInteger(MAX_PENDING_RELAYS) || MAX_PENDING_RELAYS < 1 || MAX_PENDING_RELAYS > 1000) throw new Error("Invalid SAFECORE_RELAYER_MAX_PENDING.");
+if (ACCOUNT_MAX_GAS < 100000n || ACCOUNT_MAX_GAS > 5000000n) throw new Error("Invalid SAFECORE_RELAYER_ACCOUNT_MAX_GAS.");
+if (FACTORY_MAX_GAS < 1000000n || FACTORY_MAX_GAS > 15000000n) throw new Error("Invalid SAFECORE_RELAYER_FACTORY_MAX_GAS.");
 
 const provider = new ethers.JsonRpcProvider(RPC_URL, Number(CHAIN_ID), { staticNetwork: true });
 const wallet = new ethers.Wallet(RELAYER_PRIVATE_KEY, provider);
@@ -146,14 +152,12 @@ async function validateTargetAndSelector(target, data) {
   const callSelector = data.slice(0, 10).toLowerCase();
   if (ethers.getAddress(target) === factory) {
     if (callSelector !== FACTORY_CREATE_SELECTOR) throw new Error("factory_selector_not_allowed");
-    return;
+    return { maxGas: FACTORY_MAX_GAS };
   }
   if (!ACCOUNT_SELECTORS.has(callSelector)) throw new Error("account_selector_not_allowed");
-  if (callSelector === SWEEP_RETIRED_SELECTOR) {
-    await verifyRetiredFactoryAccount(target);
-    return;
-  }
-  await verifyCurrentRegisteredAccount(target);
+  if (RETIRED_SELECTORS.has(callSelector)) await verifyRetiredFactoryAccount(target);
+  else await verifyCurrentRegisteredAccount(target);
+  return { maxGas: ACCOUNT_MAX_GAS };
 }
 
 function withRelayNonceLock(fn) {
@@ -168,12 +172,12 @@ function withRelayNonceLock(fn) {
 async function relay(target, data) {
   return withRelayNonceLock(async () => {
     await verifyFactory();
-    await validateTargetAndSelector(target, data);
+    const { maxGas } = await validateTargetAndSelector(target, data);
     await provider.call({ from: wallet.address, to: target, data, value: 0n });
     const estimated = await provider.estimateGas({ from: wallet.address, to: target, data, value: 0n });
-    if (estimated <= 0n || estimated > MAX_GAS) throw new Error("gas_limit_rejected");
+    if (estimated <= 0n || estimated > maxGas) throw new Error("gas_limit_rejected");
     const gasLimit = (estimated * 120n) / 100n;
-    if (gasLimit > MAX_GAS) throw new Error("gas_limit_rejected");
+    if (gasLimit > maxGas) throw new Error("gas_limit_rejected");
     const [nonce, feeData, balance] = await Promise.all([
       provider.getTransactionCount(wallet.address, "pending"), provider.getFeeData(), provider.getBalance(wallet.address),
     ]);
@@ -201,7 +205,11 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "GET" && req.url === "/health") {
       const network = await provider.getNetwork();
       const factoryCode = await provider.getCode(factory);
-      return json(res, 200, { status: network.chainId === CHAIN_ID && factoryCode !== "0x" ? "ready" : "not_ready", chain_id: Number(network.chainId), factory, relayer: wallet.address, protocol: 4, implementation: "4.2" });
+      return json(res, 200, {
+        status: network.chainId === CHAIN_ID && factoryCode !== "0x" ? "ready" : "not_ready",
+        chain_id: Number(network.chainId), factory, relayer: wallet.address, protocol: 4, implementation: "4.2",
+        account_max_gas: ACCOUNT_MAX_GAS.toString(), factory_max_gas: FACTORY_MAX_GAS.toString(),
+      });
     }
     if (req.method === "POST" && req.url === "/relay") {
       if (!checkRateLimit(req)) return json(res, 429, { error: "rate_limited" });
@@ -229,6 +237,7 @@ async function boot() {
   console.log(`Relayer: ${wallet.address}`);
   console.log(`Relayer balance: ${ethers.formatEther(balance)} BNB`);
   console.log(`Trusted proxy headers: ${TRUST_PROXY ? "enabled" : "disabled"}`);
+  console.log(`Gas caps: account=${ACCOUNT_MAX_GAS} factory=${FACTORY_MAX_GAS}`);
   console.log("Calldata and private keys are never logged by this service.");
   server.listen(PORT, "0.0.0.0", () => console.log(`Listening on :${PORT}`));
 }
