@@ -4,7 +4,7 @@ const { ethers } = require("ethers");
 
 const PORT = Number(process.env.PORT || 8787);
 const CHAIN_ID = BigInt(process.env.SAFECORE_CHAIN_ID || "56");
-const RPC_URL = process.env.SAFECORE_RPC_URL || process.env.BSC_DEPLOY_RPC_URL || "https://bsc-rpc.publicnode.com";
+const RPC_URL = process.env.SAFECORE_RPC_URL || process.env.BSC_DEPLOY_RPC_URL || "https://bsc-dataseed.bnbchain.org";
 const FACTORY_ADDRESS = (process.env.SAFECORE_FACTORY_ADDRESS || "").trim();
 const RELAYER_PRIVATE_KEY = (process.env.SAFECORE_RELAYER_PRIVATE_KEY || "").trim();
 const MAX_BODY_BYTES = 64 * 1024;
