@@ -2,12 +2,30 @@ require("@nomicfoundation/hardhat-ethers");
 require("@nomicfoundation/hardhat-chai-matchers");
 require("dotenv").config({ quiet: true });
 
+const defaultCompiler = {
+  version: "0.8.23",
+  settings: {
+    optimizer: { enabled: true, runs: 200 }
+  }
+};
+
+const sizeFocusedSafeCoreFactoryCompiler = {
+  version: "0.8.23",
+  settings: {
+    // SafeCoreFactoryV4 embeds the hardened SafeCore account creation bytecode.
+    // Favor EIP-170 deployability without changing UQX token/presale/vesting
+    // compiler settings or bypassing Hardhat/mainnet contract-size limits.
+    optimizer: { enabled: true, runs: 1 },
+    viaIR: true
+  }
+};
+
 /** @type {import('hardhat/config').HardhatUserConfig} */
 module.exports = {
   solidity: {
-    version: "0.8.23",
-    settings: {
-      optimizer: { enabled: true, runs: 200 }
+    compilers: [defaultCompiler],
+    overrides: {
+      "contracts/SafeCoreFactoryV4.sol": sizeFocusedSafeCoreFactoryCompiler
     }
   },
   networks: {

@@ -31,3 +31,5 @@ jobs:
         run: npm run compile
       - name: UQX and SafeCore tests
         run: npm test
+      - name: Build production relayer container
+        run: docker build -f relayer/Dockerfile -t uqx-safecore-relayer:ci .
