@@ -8,14 +8,16 @@ import "./SafeCoreAccountV4_2.sol";
 interface ISafeCoreRecoveryStateV4 {
     function recoveryCommitment() external view returns (bytes32);
     function successorConfigHash() external view returns (bytes32);
+    function successorCreationAuthorizationHash() external view returns (bytes32);
 }
 
 /// @title SafeCoreFactoryV4
 /// @notice EXPERIMENTAL gasless account factory. NOT AUDITED.
 /// @dev Any relayer may pay deployment gas, but the recovery identity signs the
-///      exact configuration hash. Replacement creation is permitted only when
-///      the retired predecessor committed that exact same config hash during the
-///      terminal Recovery Card rescue.
+///      exact configuration hash. Replacement creation is permitted only after
+///      the retired predecessor both committed and NEW-paper-authorized that
+///      exact successor config. A seed-only caller cannot prematurely create a
+///      successor for a lost Device Key and lock out the legitimate recovery.
 contract SafeCoreFactoryV4 is EIP712 {
     using ECDSA for bytes32;
 
@@ -35,15 +37,13 @@ contract SafeCoreFactoryV4 is EIP712 {
 
     mapping(address => address) public accountOf;
     mapping(address => uint256) public creationNonce;
-    /// @notice Permanent provenance registry. Current authority remains
-    /// accountOf(identity); this registry exists so retired predecessors can be
-    /// recognized for emergency-only residual sweeps after replacement.
     mapping(address => bool) public isFactoryAccount;
 
     event SafeCoreAccountCreated(address indexed identity, address indexed account, address indexed relayer, bytes32 configHash);
 
     error AccountAlreadyExists();
     error ReplacementConfigMismatch();
+    error ReplacementNotAuthorized();
     error ZeroAddress();
     error SignatureExpired();
     error InvalidSignature();
@@ -65,6 +65,7 @@ contract SafeCoreFactoryV4 is EIP712 {
             ISafeCoreRecoveryStateV4 predecessor = ISafeCoreRecoveryStateV4(previous);
             if (predecessor.recoveryCommitment() != bytes32(0)) revert AccountAlreadyExists();
             if (predecessor.successorConfigHash() != configHash) revert ReplacementConfigMismatch();
+            if (predecessor.successorCreationAuthorizationHash() != configHash) revert ReplacementNotAuthorized();
         }
 
         uint256 nonce = creationNonce[identity]++;
