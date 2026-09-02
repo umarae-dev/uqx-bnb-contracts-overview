@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.23;
 
+import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import "./SafeCoreAccountV4_1.sol";
 
 /// @title SafeCoreAccountV4_2
@@ -9,6 +10,8 @@ import "./SafeCoreAccountV4_1.sol";
 /// @dev Preserves the SafeCoreAccountV4 EIP-712 domain/version inherited from
 ///      V4.1 so existing client signatures remain compatible.
 contract SafeCoreAccountV4_2 is SafeCoreAccountV4_1 {
+    using ECDSA for bytes32;
+
     bytes32 private constant CANCEL_DESTINATIONS_TYPEHASH = keccak256(
         "CancelEmergencyDestinations(address account,address device,uint256 nonce,uint256 deadline)"
     );
@@ -27,22 +30,17 @@ contract SafeCoreAccountV4_2 is SafeCoreAccountV4_1 {
         uint256 deadline,
         bytes calldata signature
     ) external {
-        if (!authorizedDevice(device)) revert NotAuthorized();
-        (,, uint64 executableAt) = pendingEmergencyDestinations();
-        if (executableAt == 0) revert DestinationChangeMissing();
+        if (!authorizedDevice[device]) revert NotAuthorized();
+        if (pendingEmergencyDestinations.executableAt == 0) revert DestinationChangeMissing();
         if (deadline < block.timestamp) revert SignatureExpired();
 
-        uint256 nonce = deviceNonce(device);
+        uint256 nonce = deviceNonce[device]++;
         bytes32 digest = _hashTypedDataV4(keccak256(abi.encode(
             CANCEL_DESTINATIONS_TYPEHASH, address(this), device, nonce, deadline
         )));
         if (digest.recover(signature) != device) revert InvalidSignature();
 
-        // Increment through the inherited public mapping's generated getter is
-        // not writable, so this revision delegates nonce consumption to a tiny
-        // internal hook exposed by V4.1 hardening.
-        _consumeDeviceNonceV42(device, nonce);
-        _clearPendingDestinationsV42();
+        delete pendingEmergencyDestinations;
         emit EmergencyDestinationsChangeCancelled(device);
     }
 
