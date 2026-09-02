@@ -107,11 +107,11 @@ describe("SafeCoreAccountV4_1 hardening", function () {
   it("keeps an enumerable exact trusted-device registry through activate and revoke", async function () {
     const ctx = await fixture();
     const { account, deviceA, deviceB, relayer, domain } = ctx;
-    expect(await account.authorizedDevices()).to.deep.equal([deviceA.address]);
+    expect(Array.from(await account.authorizedDevices())).to.deep.equal([deviceA.address]);
     expect(await account.authorizedDeviceCount()).to.equal(1n);
 
     await enrollSecondDevice(ctx);
-    const afterEnroll = await account.authorizedDevices();
+    const afterEnroll = Array.from(await account.authorizedDevices());
     expect(afterEnroll).to.have.members([deviceA.address, deviceB.address]);
     expect(await account.authorizedDeviceCount()).to.equal(2n);
 
@@ -127,7 +127,7 @@ describe("SafeCoreAccountV4_1 hardening", function () {
     const sig = await deviceA.signTypedData(domain, revokeTypes, value);
     await account.connect(relayer).relayRevokeDevice(deviceA.address, deviceB.address, deadline, sig);
 
-    expect(await account.authorizedDevices()).to.deep.equal([deviceA.address]);
+    expect(Array.from(await account.authorizedDevices())).to.deep.equal([deviceA.address]);
     expect(await account.authorizedDevice(deviceB.address)).to.equal(false);
     expect(await account.authorizedDeviceCount()).to.equal(1n);
   });
