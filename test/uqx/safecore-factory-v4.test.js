@@ -4,6 +4,8 @@ const { time } = require("@nomicfoundation/hardhat-network-helpers");
 
 describe("SafeCoreFactoryV4", function () {
   const NATIVE = ethers.ZeroAddress;
+  const encodeRescuePayload = (assets, amounts, destinations) =>
+    ethers.AbiCoder.defaultAbiCoder().encode(["address[]", "uint256[]", "address[]"], [assets, amounts, destinations]);
 
   async function fixture() {
     const [identity, deviceA, deviceB, safe1, safe2, relayer, attacker] = await ethers.getSigners();
@@ -24,15 +26,17 @@ describe("SafeCoreFactoryV4", function () {
     return signer.signTypedData(domain, types, { identity: identity.address, configHash, nonce, deadline });
   }
 
-  async function rescueSignature(account, identity, assets, amounts, destinations, successorHash, deadline) {
+  async function rescueSignature(account, identity, rescuePayload, successorHash, deadline) {
     const network = await ethers.provider.getNetwork();
     const domain = { name: "SafeCoreAccountV4", version: "1", chainId: network.chainId, verifyingContract: await account.getAddress() };
     const types = { EmergencyRescue: [
       { name: "account", type: "address" }, { name: "identity", type: "address" }, { name: "rescueHash", type: "bytes32" },
       { name: "successorConfigHash", type: "bytes32" }, { name: "recoveryGeneration", type: "uint256" }, { name: "nonce", type: "uint256" }, { name: "deadline", type: "uint256" },
     ] };
-    const rescueHash = ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(["address[]", "uint256[]", "address[]"], [assets, amounts, destinations]));
-    return identity.signTypedData(domain, types, { account: await account.getAddress(), identity: identity.address, rescueHash, successorConfigHash: successorHash, recoveryGeneration: await account.recoveryGeneration(), nonce: await account.identityNonce(), deadline });
+    return identity.signTypedData(domain, types, {
+      account: await account.getAddress(), identity: identity.address, rescueHash: ethers.keccak256(rescuePayload), successorConfigHash: successorHash,
+      recoveryGeneration: await account.recoveryGeneration(), nonce: await account.identityNonce(), deadline,
+    });
   }
 
   it("lets a relayer deploy without receiving authority and records factory provenance", async function () {
@@ -74,9 +78,16 @@ describe("SafeCoreFactoryV4", function () {
     const successorHash = await factory.configurationHash(successor);
     expect(await oldAccount.canonicalSuccessorConfigHash(deviceB.address, newCommitment)).to.equal(successorHash);
 
-    const assets = [NATIVE]; const amounts = [ethers.MaxUint256]; const destinations = [safe1.address];
+    const rescuePayload = encodeRescuePayload([NATIVE], [ethers.MaxUint256], [safe1.address]);
     deadline = BigInt((await time.latest()) + 3600);
-    await oldAccount.connect(relayer).emergencyRescue(secret, assets, amounts, destinations, deviceB.address, newCommitment, deadline, await rescueSignature(oldAccount, identity, assets, amounts, destinations, successorHash, deadline));
+    await oldAccount.connect(relayer).emergencyRescue(
+      secret,
+      rescuePayload,
+      deviceB.address,
+      newCommitment,
+      deadline,
+      await rescueSignature(oldAccount, identity, rescuePayload, successorHash, deadline),
+    );
     expect(await oldAccount.successorConfigHash()).to.equal(successorHash);
 
     const attackerConfig = { ...successor, initialDevice: attacker.address };
@@ -95,7 +106,6 @@ describe("SafeCoreFactoryV4", function () {
     expect(await newAccount.recoveryCommitment()).to.equal(newCommitment);
     expect((await newAccount.budgetOf(NATIVE)).limit).to.equal(0n);
 
-    // Old address remains safely recoverable for accidental later deposits.
     await identity.sendTransaction({ to: oldAddress, value: ethers.parseEther("0.003") });
     const before = await ethers.provider.getBalance(safe2.address);
     await oldAccount.connect(relayer).sweepRetired(NATIVE, safe2.address);
