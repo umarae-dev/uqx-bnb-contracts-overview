@@ -11,6 +11,44 @@ const { ethers } = hre;
  * significant funds or market SafeCore as independently audited until an actual
  * third-party audit has been completed.
  */
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function waitForReceiptWithFallback(txHash, expectedChainId, confirmations, preferredRpc) {
+  const fallbackRpcs = [
+    preferredRpc,
+    "https://bsc-dataseed.bnbchain.org",
+    "https://bsc-dataseed-public.bnbchain.org",
+    "https://bsc-dataseed.defibit.io",
+    "https://bsc-dataseed.ninicoin.io",
+  ].filter((rpc, index, all) => rpc && all.indexOf(rpc) === index);
+
+  let lastError;
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    for (const rpc of fallbackRpcs) {
+      try {
+        const provider = new ethers.JsonRpcProvider(rpc);
+        const network = await provider.getNetwork();
+        if (network.chainId !== expectedChainId) continue;
+
+        const receipt = await provider.getTransactionReceipt(txHash);
+        if (!receipt) continue;
+        if (receipt.status !== 1) return receipt;
+
+        const latestBlock = await provider.getBlockNumber();
+        const seenConfirmations = latestBlock - receipt.blockNumber + 1;
+        if (seenConfirmations >= confirmations) return receipt;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    await sleep(2_000);
+  }
+
+  const detail = lastError?.message ? ` Last RPC error: ${lastError.message}` : "";
+  throw new Error(`Timed out verifying deployment receipt across BSC RPC fallbacks.${detail}`);
+}
+
 async function main() {
   const networkName = (process.env.SAFECORE_NETWORK || "bscTestnet").trim();
   const privateKey = (process.env.SAFECORE_DEPLOYER_PRIVATE_KEY || "").trim();
@@ -21,12 +59,12 @@ async function main() {
   const networks = {
     bscTestnet: {
       chainId: 97n,
-      rpc: process.env.BSC_TESTNET_RPC_URL || "https://bsc-testnet-rpc.publicnode.com",
+      rpc: process.env.BSC_TESTNET_RPC_URL || "https://bsc-testnet-dataseed.bnbchain.org",
       label: "BNB Smart Chain Testnet",
     },
     bsc: {
       chainId: 56n,
-      rpc: process.env.BSC_DEPLOY_RPC_URL || "https://bsc-rpc.publicnode.com",
+      rpc: process.env.BSC_DEPLOY_RPC_URL || "https://bsc-dataseed.bnbchain.org",
       label: "BNB Smart Chain Mainnet",
     },
   };
@@ -61,11 +99,21 @@ async function main() {
   if (!tx) throw new Error("Deployment transaction was not created.");
   console.log(`Deployment tx: ${tx.hash}`);
 
-  const receipt = await tx.wait(2);
+  let receipt;
+  try {
+    receipt = await tx.wait(2);
+  } catch (error) {
+    console.warn(`Primary RPC receipt wait failed; checking BSC fallback RPCs for the SAME tx: ${error?.message || error}`);
+    receipt = await waitForReceiptWithFallback(tx.hash, config.chainId, 2, config.rpc);
+  }
   if (!receipt || receipt.status !== 1) throw new Error("SafeCoreFactoryV4 deployment reverted.");
 
-  const address = await factory.getAddress();
-  const code = await provider.getCode(address);
+  const address = receipt.contractAddress || (await factory.getAddress());
+  const verifyProvider = new ethers.JsonRpcProvider("https://bsc-dataseed.bnbchain.org");
+  const verifyNetwork = await verifyProvider.getNetwork();
+  if (verifyNetwork.chainId !== config.chainId) throw new Error("Verification RPC returned the wrong chain.");
+
+  const code = await verifyProvider.getCode(address);
   if (!code || code === "0x") throw new Error("Factory deployment has no bytecode at the resulting address.");
 
   const deployedBytes = (code.length - 2) / 2;
@@ -73,8 +121,9 @@ async function main() {
     throw new Error(`Factory runtime bytecode exceeds EIP-170: ${deployedBytes} bytes.`);
   }
 
-  const accountProbe = await factory.accountOf(signer.address);
-  const nonceProbe = await factory.creationNonce(signer.address);
+  const verifiedFactory = new ethers.Contract(address, Factory.interface, verifyProvider);
+  const accountProbe = await verifiedFactory.accountOf(signer.address);
+  const nonceProbe = await verifiedFactory.creationNonce(signer.address);
   if (accountProbe !== ethers.ZeroAddress || nonceProbe !== 0n) {
     throw new Error("Factory initial public state probe failed.");
   }
