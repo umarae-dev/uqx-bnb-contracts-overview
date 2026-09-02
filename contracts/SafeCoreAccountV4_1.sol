@@ -45,6 +45,9 @@ contract SafeCoreAccountV4_1 is ReentrancyGuard, EIP712 {
     bytes32 public successorRecoveryCommitment;
     address public successorRecoveryAuthority;
     uint256 public successorRebindNonce;
+    /// @notice Replacement factory creation remains disabled until the NEW
+    /// paper-card authority has explicitly authorized the current config hash.
+    bytes32 public successorCreationAuthorizationHash;
 
     struct InitConfig { address initialDevice; address emergencyAddress1; address emergencyAddress2; bytes32 recoveryCommitment; uint64 destinationChangeDelay; address[] initialAssets; uint192[] initialLimits; }
     struct Budget { uint192 limit; uint192 spent; uint64 epochStartedAt; }
@@ -162,6 +165,9 @@ contract SafeCoreAccountV4_1 is ReentrancyGuard, EIP712 {
         _executeRescuePayload(rescuePayload);
     }
 
+    /// @notice NEW paper-card authority may select/reselect the not-yet-created
+    /// successor Device Key. This also authorizes exactly the resulting config
+    /// hash for factory creation. Seed-only callers cannot set this authorization.
     function rebindSuccessorDevice(address newDevice, uint256 deadline, bytes calldata authoritySignature) external {
         if (recoveryCommitment != bytes32(0)) revert AccountNotRetired();
         if (newDevice == address(0) || successorRecoveryAuthority == address(0) || successorRecoveryCommitment == bytes32(0) || successorConfigHash == bytes32(0)) revert InvalidSuccessorConfig();
@@ -171,6 +177,7 @@ contract SafeCoreAccountV4_1 is ReentrancyGuard, EIP712 {
         if (digest.recover(authoritySignature) != successorRecoveryAuthority) revert InvalidSignature();
         bytes32 rebound = _canonicalSuccessorConfigHash(newDevice, successorRecoveryCommitment);
         successorConfigHash = rebound;
+        successorCreationAuthorizationHash = rebound;
         emit SuccessorDeviceRebound(newDevice, rebound, nonce);
     }
 
@@ -286,6 +293,7 @@ contract SafeCoreAccountV4_1 is ReentrancyGuard, EIP712 {
         successorConfigHash = canonicalSuccessorHash;
         successorRecoveryCommitment = successorRecoveryCommitment_;
         successorRecoveryAuthority = successorAuthority;
+        successorCreationAuthorizationHash = bytes32(0);
         recoveryCommitment = bytes32(0);
         emit AccountRetired(canonicalSuccessorHash, successorAuthority);
     }
