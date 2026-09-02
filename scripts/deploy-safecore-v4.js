@@ -5,14 +5,11 @@ const { ethers } = hre;
 /**
  * SafeCore V4 factory deployer.
  *
- * Usage (PowerShell examples):
- *   $env:SAFECORE_NETWORK="bscTestnet"
- *   $env:SAFECORE_DEPLOYER_PRIVATE_KEY="<local-only>"
- *   npx hardhat run scripts/deploy-safecore-v4.js
- *
- * Mainnet is deliberately blocked unless an external audit has actually been
- * completed and the operator supplies the explicit acknowledgement below.
  * The private key is read only from the local environment and is never logged.
+ * Mainnet deployment is permitted only with an explicit operator acknowledgement
+ * that this pre-audit deployment is for tiny-fund acceptance testing. Do not use
+ * significant funds or market SafeCore as independently audited until an actual
+ * third-party audit has been completed.
  */
 async function main() {
   const networkName = (process.env.SAFECORE_NETWORK || "bscTestnet").trim();
@@ -36,11 +33,11 @@ async function main() {
   const config = networks[networkName];
   if (!config) throw new Error("SAFECORE_NETWORK must be bscTestnet or bsc.");
 
-  if (networkName === "bsc" && process.env.SAFECORE_MAINNET_AUDIT_ACK !== "EXTERNAL_AUDIT_COMPLETE") {
+  if (networkName === "bsc" && process.env.SAFECORE_MAINNET_TEST_ACK !== "I_ACCEPT_UNAUDITED_MAINNET_TEST_RISK") {
     throw new Error(
-      "Mainnet deployment blocked: SafeCore V4 source is marked NOT AUDITED. " +
-      "Complete an independent smart-contract audit first, then set " +
-      "SAFECORE_MAINNET_AUDIT_ACK=EXTERNAL_AUDIT_COMPLETE locally."
+      "Mainnet deployment blocked until the operator explicitly acknowledges pre-audit tiny-fund testing risk. " +
+      "For a deliberate mainnet acceptance test, set SAFECORE_MAINNET_TEST_ACK=I_ACCEPT_UNAUDITED_MAINNET_TEST_RISK locally. " +
+      "Do not use significant funds or claim an external audit unless one has actually been completed."
     );
   }
 
@@ -82,8 +79,6 @@ async function main() {
     throw new Error("Factory initial public state probe failed.");
   }
 
-  // Reproduce the factory EIP-712 domain separator off-chain to prove the
-  // exact client domain inputs expected by UQX without adding a runtime helper.
   const domain = {
     name: "SafeCoreFactoryV4",
     version: "1",
@@ -98,7 +93,7 @@ async function main() {
   console.log(`Block: ${receipt.blockNumber}`);
   console.log(`Bytecode bytes: ${deployedBytes}`);
   console.log(`EIP712 domain hash: ${domainHash}`);
-  console.log("Next: independently verify the source, deploy/configure the HTTPS relayer, then place only the PUBLIC factory address in app deployment config.");
+  console.log("Next: verify source, deploy/configure the HTTPS relayer, then place only the PUBLIC factory address in app deployment config.");
 }
 
 main().catch((error) => {
