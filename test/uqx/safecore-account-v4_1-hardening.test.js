@@ -23,6 +23,9 @@ describe("SafeCoreAccountV4_1 hardening", function () {
     { name: "amount", type: "uint256" }, { name: "nonce", type: "uint256" }, { name: "deadline", type: "uint256" },
   ] };
 
+  const encodeRescuePayload = (assets, amounts, destinations) =>
+    ethers.AbiCoder.defaultAbiCoder().encode(["address[]", "uint256[]", "address[]"], [assets, amounts, destinations]);
+
   async function fixture() {
     const [identity, deviceA, deviceB, relayer, safe1, safe2] = await ethers.getSigners();
     const paper = ethers.keccak256(ethers.toUtf8Bytes("paper-a"));
@@ -79,11 +82,13 @@ describe("SafeCoreAccountV4_1 hardening", function () {
     const successorHash = await account.canonicalSuccessorConfigHash(deviceB.address, successorCommitment);
 
     const assets = [NATIVE]; const amounts = [ethers.parseEther("0.04")]; const destinations = [safe1.address];
-    const rescueHash = ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(["address[]", "uint256[]", "address[]"], [assets, amounts, destinations]));
+    const rescuePayload = encodeRescuePayload(assets, amounts, destinations);
+    const rescueHash = ethers.keccak256(rescuePayload);
+    expect(await account.rescuePayloadHash(rescuePayload)).to.equal(rescueHash);
     const deadline = BigInt((await time.latest()) + 3600);
     const value = { account: accountAddress, identity: identity.address, rescueHash, successorConfigHash: successorHash, recoveryGeneration: await account.recoveryGeneration(), nonce: await account.identityNonce(), deadline };
     const sig = await identity.signTypedData(domain, rescueTypes, value);
-    await account.connect(relayer).emergencyRescue(paper, assets, amounts, destinations, deviceB.address, successorCommitment, deadline, sig);
+    await account.connect(relayer).emergencyRescue(paper, rescuePayload, deviceB.address, successorCommitment, deadline, sig);
 
     expect(await account.recoveryCommitment()).to.equal(ethers.ZeroHash);
     expect(await account.successorConfigHash()).to.equal(successorHash);
