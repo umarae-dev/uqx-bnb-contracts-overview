@@ -23,7 +23,8 @@ const ACCOUNT_SELECTORS = new Set([
   selector("requestDeviceEnrollment(address,bytes32,uint256,bytes,bytes)"),
   selector("activateDeviceWithApproval(address,bytes32,address,uint256,bytes)"),
   selector("relaySpend(address,address,address,uint256,uint256,bytes)"),
-  selector("emergencyRescue(bytes32,address[],uint256[],address[],uint256,bytes)"),
+  selector("emergencyRescue(bytes32,address[],uint256[],address[],bytes32,uint256,bytes)"),
+  selector("sweepRetired(address,address)"),
   selector("requestEmergencyDestinationsChange(address,address,address,uint256,bytes)"),
   selector("applyEmergencyDestinationsChange()"),
   selector("cancelEmergencyDestinationsChange(address,uint256,bytes)"),
@@ -164,9 +165,7 @@ async function relay(target, data) {
     if (!gasPrice || gasPrice <= 0n) throw new Error("gas_price_unavailable");
     if (balance < gasLimit * gasPrice) throw new Error("relayer_insufficient_bnb");
 
-    const signed = await wallet.signTransaction({
-      chainId: CHAIN_ID, type: 0, nonce, to: target, data, value: 0n, gasLimit, gasPrice,
-    });
+    const signed = await wallet.signTransaction({ chainId: CHAIN_ID, type: 0, nonce, to: target, data, value: 0n, gasLimit, gasPrice });
     return (await provider.broadcastTransaction(signed)).hash;
   });
 }
