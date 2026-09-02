@@ -35,6 +35,10 @@ contract SafeCoreFactoryV4 is EIP712 {
 
     mapping(address => address) public accountOf;
     mapping(address => uint256) public creationNonce;
+    /// @notice Permanent provenance registry. Current authority remains
+    /// accountOf(identity); this registry exists so retired predecessors can be
+    /// recognized for emergency-only residual sweeps after replacement.
+    mapping(address => bool) public isFactoryAccount;
 
     event SafeCoreAccountCreated(address indexed identity, address indexed account, address indexed relayer, bytes32 configHash);
 
@@ -81,6 +85,7 @@ contract SafeCoreFactoryV4 is EIP712 {
 
         SafeCoreAccountV4_2 created = new SafeCoreAccountV4_2(identity, init);
         account = address(created);
+        isFactoryAccount[account] = true;
         accountOf[identity] = account;
         emit SafeCoreAccountCreated(identity, account, msg.sender, configHash);
     }
