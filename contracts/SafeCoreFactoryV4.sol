@@ -3,15 +3,15 @@ pragma solidity ^0.8.23;
 
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
-import "./SafeCoreAccountV4_1.sol";
+import "./SafeCoreAccountV4_2.sol";
 
 /// @title SafeCoreFactoryV4
 /// @notice EXPERIMENTAL gasless account factory. NOT AUDITED.
 /// @dev Any relayer may pay deployment gas, but the recovery identity signs the
 ///      exact configuration hash. The relayer cannot alter devices, rescue
 ///      addresses, recovery commitment, delay, assets or limits. Newly created
-///      accounts use the hardened V4.1 implementation while preserving the V4
-///      factory ABI and EIP-712 domain expected by clients.
+///      accounts use the latest hardened V4 implementation while preserving the
+///      V4 factory ABI and EIP-712 domain expected by clients.
 contract SafeCoreFactoryV4 is EIP712 {
     using ECDSA for bytes32;
 
@@ -68,7 +68,7 @@ contract SafeCoreFactoryV4 is EIP712 {
             initialLimits: config.initialLimits
         });
 
-        SafeCoreAccountV4_1 created = new SafeCoreAccountV4_1(identity, init);
+        SafeCoreAccountV4_2 created = new SafeCoreAccountV4_2(identity, init);
         account = address(created);
         accountOf[identity] = account;
         emit SafeCoreAccountCreated(identity, account, msg.sender, configHash);
