@@ -21,7 +21,8 @@ contract SafeCoreAccountV4_1 is ReentrancyGuard, EIP712 {
     bytes32 private constant ENROLL_TYPEHASH = keccak256("EnrollDevice(address account,address newDevice,bytes32 pairingHash,uint256 nonce,uint256 deadline)");
     bytes32 private constant APPROVE_TYPEHASH = keccak256("ApproveDevice(address account,address newDevice,bytes32 pairingHash,uint256 enrollmentNonce,uint256 deadline)");
     bytes32 private constant SPEND_TYPEHASH = keccak256("DeviceSpend(address account,address device,address asset,address to,uint256 amount,uint256 nonce,uint256 deadline)");
-    bytes32 private constant RESCUE_TYPEHASH = keccak256("EmergencyRescue(address account,address identity,bytes32 rescueHash,bytes32 successorConfigHash,uint256 recoveryGeneration,uint256 nonce,uint256 deadline)");
+    bytes32 private constant RESCUE_TYPEHASH = keccak256("EmergencyRescue(address account,address identity,bytes32 rescueHash,bytes32 successorConfigHash,address successorAuthority,uint256 recoveryGeneration,uint256 nonce,uint256 deadline)");
+    bytes32 private constant REBIND_SUCCESSOR_TYPEHASH = keccak256("RebindSuccessorDevice(address account,address newDevice,uint256 nonce,uint256 deadline)");
     bytes32 private constant DESTINATIONS_TYPEHASH = keccak256("ChangeEmergencyDestinations(address account,address device,address first,address second,uint256 nonce,uint256 deadline)");
     bytes32 private constant REVOKE_TYPEHASH = keccak256("RevokeDevice(address account,address device,address target,uint256 nonce,uint256 deadline)");
     bytes32 private constant BUDGET_TYPEHASH = keccak256("ChangeBudget(address account,address device,address asset,uint256 newLimit,uint256 nonce,uint256 deadline)");
@@ -41,6 +42,9 @@ contract SafeCoreAccountV4_1 is ReentrancyGuard, EIP712 {
     bytes32 public recoveryCommitment;
     uint256 public recoveryGeneration;
     bytes32 public successorConfigHash;
+    bytes32 public successorRecoveryCommitment;
+    address public successorRecoveryAuthority;
+    uint256 public successorRebindNonce;
 
     struct InitConfig { address initialDevice; address emergencyAddress1; address emergencyAddress2; bytes32 recoveryCommitment; uint64 destinationChangeDelay; address[] initialAssets; uint192[] initialLimits; }
     struct Budget { uint192 limit; uint192 spent; uint64 epochStartedAt; }
@@ -59,7 +63,8 @@ contract SafeCoreAccountV4_1 is ReentrancyGuard, EIP712 {
     event DeviceActivated(address indexed newDevice, address indexed approvingDevice);
     event DeviceRevoked(address indexed device, address indexed approvedBy);
     event EmergencyRescueExecuted(address indexed relayer, uint256 indexed generation, address indexed destination, address asset, uint256 amount);
-    event AccountRetired(bytes32 indexed successorConfigHash);
+    event AccountRetired(bytes32 indexed successorConfigHash, address indexed successorAuthority);
+    event SuccessorDeviceRebound(address indexed newDevice, bytes32 indexed successorConfigHash, uint256 indexed nonce);
     event RetiredAssetSwept(address indexed asset, address indexed destination, uint256 amount);
     event EmergencyDestinationsChangeRequested(address indexed first, address indexed second, uint256 executableAt, address approvedBy);
     event EmergencyDestinationsChanged(address indexed first, address indexed second);
@@ -140,27 +145,33 @@ contract SafeCoreAccountV4_1 is ReentrancyGuard, EIP712 {
         emit RelayedSpend(msg.sender, device, asset, to, amount, nonce);
     }
 
-    /// @dev `rescuePayload` is the canonical ABI encoding of
-    /// (address[] assets,uint256[] amounts,address[] destinations). Packing the
-    /// dynamic arrays into one signed bytes value avoids legacy-codegen stack
-    /// pressure while keeping the exact rescue plan cryptographically bound.
-    /// The successor remains fail-closed: same emergency wallets and immutable
-    /// delay, a new Device Key + Recovery commitment, and no initial budgets.
     function emergencyRescue(
         bytes32 paperSecret,
         bytes calldata rescuePayload,
         address successorDevice,
-        bytes32 successorRecoveryCommitment,
+        bytes32 successorRecoveryCommitment_,
+        address successorAuthority,
         uint256 deadline,
         bytes calldata identitySignature
     ) external nonReentrant onlyActiveAccount {
-        if (successorDevice == address(0) || successorRecoveryCommitment == bytes32(0)) revert InvalidSuccessorConfig();
+        if (successorDevice == address(0) || successorRecoveryCommitment_ == bytes32(0) || successorAuthority == address(0)) revert InvalidSuccessorConfig();
         _checkDeadline(deadline);
         if (keccak256(abi.encodePacked(paperSecret)) != recoveryCommitment) revert InvalidRecoverySecret();
-
-        bytes32 canonicalSuccessorHash = _canonicalSuccessorConfigHash(successorDevice, successorRecoveryCommitment);
-        _authorizeTerminalRescue(keccak256(rescuePayload), canonicalSuccessorHash, deadline, identitySignature);
+        bytes32 canonicalSuccessorHash = _canonicalSuccessorConfigHash(successorDevice, successorRecoveryCommitment_);
+        _authorizeTerminalRescue(keccak256(rescuePayload), canonicalSuccessorHash, successorRecoveryCommitment_, successorAuthority, deadline, identitySignature);
         _executeRescuePayload(rescuePayload);
+    }
+
+    function rebindSuccessorDevice(address newDevice, uint256 deadline, bytes calldata authoritySignature) external {
+        if (recoveryCommitment != bytes32(0)) revert AccountNotRetired();
+        if (newDevice == address(0) || successorRecoveryAuthority == address(0) || successorRecoveryCommitment == bytes32(0) || successorConfigHash == bytes32(0)) revert InvalidSuccessorConfig();
+        _checkDeadline(deadline);
+        uint256 nonce = successorRebindNonce++;
+        bytes32 digest = _hashTypedDataV4(keccak256(abi.encode(REBIND_SUCCESSOR_TYPEHASH, address(this), newDevice, nonce, deadline)));
+        if (digest.recover(authoritySignature) != successorRecoveryAuthority) revert InvalidSignature();
+        bytes32 rebound = _canonicalSuccessorConfigHash(newDevice, successorRecoveryCommitment);
+        successorConfigHash = rebound;
+        emit SuccessorDeviceRebound(newDevice, rebound, nonce);
     }
 
     function sweepRetired(address asset, address payable destination) external nonReentrant {
@@ -257,34 +268,33 @@ contract SafeCoreAccountV4_1 is ReentrancyGuard, EIP712 {
     function spendDigest(address device, address asset, address to, uint256 amount, uint256 nonce, uint256 deadline) external view returns (bytes32) { return _hashTypedDataV4(keccak256(abi.encode(SPEND_TYPEHASH, address(this), device, asset, to, amount, nonce, deadline))); }
     function budgetChangeDigest(address device, address asset, uint192 newLimit, uint256 nonce, uint256 deadline) external view returns (bytes32) { return _hashTypedDataV4(keccak256(abi.encode(BUDGET_TYPEHASH, address(this), device, asset, uint256(newLimit), nonce, deadline))); }
     function rescuePayloadHash(bytes calldata rescuePayload) external pure returns (bytes32) { return keccak256(rescuePayload); }
-    function canonicalSuccessorConfigHash(address successorDevice, bytes32 successorRecoveryCommitment) external view returns (bytes32) { return _canonicalSuccessorConfigHash(successorDevice, successorRecoveryCommitment); }
+    function canonicalSuccessorConfigHash(address successorDevice, bytes32 successorRecoveryCommitment_) external view returns (bytes32) { return _canonicalSuccessorConfigHash(successorDevice, successorRecoveryCommitment_); }
+    function rebindSuccessorDigest(address newDevice, uint256 nonce, uint256 deadline) external view returns (bytes32) { return _hashTypedDataV4(keccak256(abi.encode(REBIND_SUCCESSOR_TYPEHASH, address(this), newDevice, nonce, deadline))); }
 
-    function _canonicalSuccessorConfigHash(address successorDevice, bytes32 successorRecoveryCommitment) private view returns (bytes32) {
-        if (successorDevice == address(0) || successorRecoveryCommitment == bytes32(0)) revert InvalidSuccessorConfig();
+    function _canonicalSuccessorConfigHash(address successorDevice, bytes32 successorRecoveryCommitment_) private view returns (bytes32) {
+        if (successorDevice == address(0) || successorRecoveryCommitment_ == bytes32(0)) revert InvalidSuccessorConfig();
         address[] memory noAssets = new address[](0);
         uint192[] memory noLimits = new uint192[](0);
-        return keccak256(abi.encode(successorDevice, emergencyAddress1, emergencyAddress2, successorRecoveryCommitment, emergencyDestinationChangeDelay, noAssets, noLimits));
+        return keccak256(abi.encode(successorDevice, emergencyAddress1, emergencyAddress2, successorRecoveryCommitment_, emergencyDestinationChangeDelay, noAssets, noLimits));
     }
 
-    function _authorizeTerminalRescue(bytes32 rescueHash, bytes32 canonicalSuccessorHash, uint256 deadline, bytes calldata identitySignature) private {
+    function _authorizeTerminalRescue(bytes32 rescueHash, bytes32 canonicalSuccessorHash, bytes32 successorRecoveryCommitment_, address successorAuthority, uint256 deadline, bytes calldata identitySignature) private {
         uint256 nonce = identityNonce++;
         uint256 generation = recoveryGeneration;
-        bytes32 digest = _hashTypedDataV4(keccak256(abi.encode(RESCUE_TYPEHASH, address(this), identity, rescueHash, canonicalSuccessorHash, generation, nonce, deadline)));
+        bytes32 digest = _hashTypedDataV4(keccak256(abi.encode(RESCUE_TYPEHASH, address(this), identity, rescueHash, canonicalSuccessorHash, successorAuthority, generation, nonce, deadline)));
         if (digest.recover(identitySignature) != identity) revert InvalidSignature();
         successorConfigHash = canonicalSuccessorHash;
+        successorRecoveryCommitment = successorRecoveryCommitment_;
+        successorRecoveryAuthority = successorAuthority;
         recoveryCommitment = bytes32(0);
-        emit AccountRetired(canonicalSuccessorHash);
+        emit AccountRetired(canonicalSuccessorHash, successorAuthority);
     }
 
     function _executeRescuePayload(bytes calldata rescuePayload) private {
-        (address[] memory assets, uint256[] memory amounts, address[] memory destinations) = abi.decode(
-            rescuePayload,
-            (address[], uint256[], address[])
-        );
+        (address[] memory assets, uint256[] memory amounts, address[] memory destinations) = abi.decode(rescuePayload, (address[], uint256[], address[]));
         uint256 length = assets.length;
         if (length == 0 || length != amounts.length || length != destinations.length) revert ArrayLengthMismatch();
         if (length > MAX_RESCUE_ITEMS) revert TooManyItems();
-
         for (uint256 i; i < length; ++i) {
             if (!_isEmergencyDestination(destinations[i])) revert EmergencyDestinationOnly();
             if (amounts[i] == 0) revert ZeroAmount();
