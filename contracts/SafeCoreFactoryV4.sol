@@ -7,15 +7,15 @@ import "./SafeCoreAccountV4_2.sol";
 
 interface ISafeCoreRecoveryStateV4 {
     function recoveryCommitment() external view returns (bytes32);
+    function successorConfigHash() external view returns (bytes32);
 }
 
 /// @title SafeCoreFactoryV4
 /// @notice EXPERIMENTAL gasless account factory. NOT AUDITED.
 /// @dev Any relayer may pay deployment gas, but the recovery identity signs the
-///      exact configuration hash. The relayer cannot alter devices, rescue
-///      addresses, recovery commitment, delay, assets or limits. Newly created
-///      accounts use the latest hardened V4 implementation while preserving the
-///      V4 creation ABI and EIP-712 domain expected by clients.
+///      exact configuration hash. Replacement creation is permitted only when
+///      the retired predecessor committed that exact same config hash during the
+///      terminal Recovery Card rescue.
 contract SafeCoreFactoryV4 is EIP712 {
     using ECDSA for bytes32;
 
@@ -39,6 +39,7 @@ contract SafeCoreFactoryV4 is EIP712 {
     event SafeCoreAccountCreated(address indexed identity, address indexed account, address indexed relayer, bytes32 configHash);
 
     error AccountAlreadyExists();
+    error ReplacementConfigMismatch();
     error ZeroAddress();
     error SignatureExpired();
     error InvalidSignature();
@@ -52,20 +53,16 @@ contract SafeCoreFactoryV4 is EIP712 {
         bytes calldata identitySignature
     ) external returns (address account) {
         if (identity == address(0)) revert ZeroAddress();
-
-        // Normal operation remains strictly one account per recovery identity.
-        // The only replacement path is after a successful one-time emergency
-        // rescue has consumed the previous account's Recovery Card commitment.
-        // This lets a user who permanently lost the final trusted phone start a
-        // fresh SafeCore account without granting the lost device authority over
-        // the replacement account.
-        address previous = accountOf[identity];
-        if (previous != address(0) && ISafeCoreRecoveryStateV4(previous).recoveryCommitment() != bytes32(0)) {
-            revert AccountAlreadyExists();
-        }
         if (deadline < block.timestamp) revert SignatureExpired();
 
         bytes32 configHash = configurationHash(config);
+        address previous = accountOf[identity];
+        if (previous != address(0)) {
+            ISafeCoreRecoveryStateV4 predecessor = ISafeCoreRecoveryStateV4(previous);
+            if (predecessor.recoveryCommitment() != bytes32(0)) revert AccountAlreadyExists();
+            if (predecessor.successorConfigHash() != configHash) revert ReplacementConfigMismatch();
+        }
+
         uint256 nonce = creationNonce[identity]++;
         bytes32 digest = _hashTypedDataV4(keccak256(abi.encode(
             CREATE_TYPEHASH, identity, configHash, nonce, deadline
