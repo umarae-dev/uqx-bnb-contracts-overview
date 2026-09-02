@@ -71,18 +71,33 @@ async function main() {
   const code = await provider.getCode(address);
   if (!code || code === "0x") throw new Error("Factory deployment has no bytecode at the resulting address.");
 
-  const domainProbe = await factory.createDigest(
-    signer.address,
-    ethers.ZeroHash,
-    0n,
-    BigInt(Math.floor(Date.now() / 1000) + 600),
-  );
-  if (!/^0x[0-9a-fA-F]{64}$/.test(domainProbe)) throw new Error("Factory EIP-712 digest probe failed.");
+  const deployedBytes = (code.length - 2) / 2;
+  if (deployedBytes > 24_576) {
+    throw new Error(`Factory runtime bytecode exceeds EIP-170: ${deployedBytes} bytes.`);
+  }
+
+  const accountProbe = await factory.accountOf(signer.address);
+  const nonceProbe = await factory.creationNonce(signer.address);
+  if (accountProbe !== ethers.ZeroAddress || nonceProbe !== 0n) {
+    throw new Error("Factory initial public state probe failed.");
+  }
+
+  // Reproduce the factory EIP-712 domain separator off-chain to prove the
+  // exact client domain inputs expected by UQX without adding a runtime helper.
+  const domain = {
+    name: "SafeCoreFactoryV4",
+    version: "1",
+    chainId: config.chainId,
+    verifyingContract: address,
+  };
+  const domainHash = ethers.TypedDataEncoder.hashDomain(domain);
+  if (!/^0x[0-9a-fA-F]{64}$/.test(domainHash)) throw new Error("Factory EIP-712 domain probe failed.");
 
   console.log("SafeCoreFactoryV4 deployment verified.");
   console.log(`SAFECORE_FACTORY_ADDRESS=${address}`);
   console.log(`Block: ${receipt.blockNumber}`);
-  console.log(`Bytecode bytes: ${(code.length - 2) / 2}`);
+  console.log(`Bytecode bytes: ${deployedBytes}`);
+  console.log(`EIP712 domain hash: ${domainHash}`);
   console.log("Next: independently verify the source, deploy/configure the HTTPS relayer, then place only the PUBLIC factory address in app deployment config.");
 }
 
