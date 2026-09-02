@@ -28,7 +28,6 @@ const ACCOUNT_SELECTORS = new Set([
   selector("applyEmergencyDestinationsChange()"),
   selector("cancelEmergencyDestinationsChange(address,uint256,bytes)"),
   selector("relayRevokeDevice(address,address,uint256,bytes)"),
-  selector("relayArmRecovery(address,bytes32,uint256,bytes)"),
   selector("requestBudgetChange(address,address,uint192,uint256,bytes)"),
   selector("applyBudgetIncrease(address)"),
   selector("cancelBudgetIncrease(address,address,uint256,bytes)"),
