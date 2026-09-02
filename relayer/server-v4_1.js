@@ -22,7 +22,7 @@ const ACCOUNT_SELECTORS = new Set([
   selector("requestDeviceEnrollment(address,bytes32,uint256,bytes,bytes)"),
   selector("activateDeviceWithApproval(address,bytes32,address,uint256,bytes)"),
   selector("relaySpend(address,address,address,uint256,uint256,bytes)"),
-  selector("emergencyRescue(bytes32,address[],uint256[],address[],bytes32,uint256,bytes)"),
+  selector("emergencyRescue(bytes32,address[],uint256[],address[],address,bytes32,uint256,bytes)"),
   SWEEP_RETIRED_SELECTOR,
   selector("requestEmergencyDestinationsChange(address,address,address,uint256,bytes)"),
   selector("applyEmergencyDestinationsChange()"),
@@ -80,9 +80,7 @@ function checkRateLimit(req) {
   if (recent.length >= RATE_LIMIT_PER_MINUTE) return false;
   recent.push(now);
   rate.set(ip, recent);
-  if (rate.size > 10_000) {
-    for (const [key, values] of rate) if (!values.some((t) => t >= windowStart)) rate.delete(key);
-  }
+  if (rate.size > 10_000) for (const [key, values] of rate) if (!values.some((t) => t >= windowStart)) rate.delete(key);
   return true;
 }
 
@@ -135,7 +133,6 @@ async function verifyRetiredFactoryAccount(target) {
   const registryRaw = await provider.call({ to: factory, data: registryData });
   const [registered] = coder.decode(["bool"], registryRaw);
   if (!registered) throw new Error("account_not_factory_registered");
-
   const [recoveryRaw, successorRaw] = await Promise.all([
     provider.call({ to: target, data: RECOVERY_COMMITMENT_SELECTOR }),
     provider.call({ to: target, data: SUCCESSOR_CONFIG_SELECTOR }),
@@ -162,10 +159,7 @@ async function validateTargetAndSelector(target, data) {
 function withRelayNonceLock(fn) {
   if (pendingRelays >= MAX_PENDING_RELAYS) return Promise.reject(new Error("relayer_overloaded"));
   pendingRelays += 1;
-  const wrapped = async () => {
-    try { return await fn(); }
-    finally { pendingRelays -= 1; }
-  };
+  const wrapped = async () => { try { return await fn(); } finally { pendingRelays -= 1; } };
   const next = relayQueue.then(wrapped, wrapped);
   relayQueue = next.catch(() => undefined);
   return next;
@@ -180,14 +174,12 @@ async function relay(target, data) {
     if (estimated <= 0n || estimated > MAX_GAS) throw new Error("gas_limit_rejected");
     const gasLimit = (estimated * 120n) / 100n;
     if (gasLimit > MAX_GAS) throw new Error("gas_limit_rejected");
-
     const [nonce, feeData, balance] = await Promise.all([
       provider.getTransactionCount(wallet.address, "pending"), provider.getFeeData(), provider.getBalance(wallet.address),
     ]);
     const gasPrice = feeData.gasPrice;
     if (!gasPrice || gasPrice <= 0n) throw new Error("gas_price_unavailable");
     if (balance < gasLimit * gasPrice) throw new Error("relayer_insufficient_bnb");
-
     const signed = await wallet.signTransaction({ chainId: CHAIN_ID, type: 0, nonce, to: target, data, value: 0n, gasLimit, gasPrice });
     return (await provider.broadcastTransaction(signed)).hash;
   });
@@ -209,10 +201,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "GET" && req.url === "/health") {
       const network = await provider.getNetwork();
       const factoryCode = await provider.getCode(factory);
-      return json(res, 200, {
-        status: network.chainId === CHAIN_ID && factoryCode !== "0x" ? "ready" : "not_ready",
-        chain_id: Number(network.chainId), factory, relayer: wallet.address, protocol: 4, implementation: "4.2",
-      });
+      return json(res, 200, { status: network.chainId === CHAIN_ID && factoryCode !== "0x" ? "ready" : "not_ready", chain_id: Number(network.chainId), factory, relayer: wallet.address, protocol: 4, implementation: "4.2" });
     }
     if (req.method === "POST" && req.url === "/relay") {
       if (!checkRateLimit(req)) return json(res, 429, { error: "rate_limited" });
@@ -244,7 +233,4 @@ async function boot() {
   server.listen(PORT, "0.0.0.0", () => console.log(`Listening on :${PORT}`));
 }
 
-boot().catch((error) => {
-  console.error(`SafeCore relayer startup failed: ${publicError(error)}`);
-  process.exitCode = 1;
-});
+boot().catch((error) => { console.error(`SafeCore relayer startup failed: ${publicError(error)}`); process.exitCode = 1; });
