@@ -16,15 +16,14 @@ const TRUST_PROXY = /^(1|true|yes)$/i.test(String(process.env.SAFECORE_TRUST_PRO
 const addressPattern = /^0x[0-9a-fA-F]{40}$/;
 const hexPattern = /^0x[0-9a-fA-F]*$/;
 const selector = (signature) => ethers.id(signature).slice(0, 10).toLowerCase();
-const FACTORY_CREATE_SELECTOR = selector(
-  "createAccountFor(address,(address,address,address,bytes32,uint64,address[],uint192[]),uint256,bytes)"
-);
+const FACTORY_CREATE_SELECTOR = selector("createAccountFor(address,(address,address,address,bytes32,uint64,address[],uint192[]),uint256,bytes)");
+const SWEEP_RETIRED_SELECTOR = selector("sweepRetired(address,address)");
 const ACCOUNT_SELECTORS = new Set([
   selector("requestDeviceEnrollment(address,bytes32,uint256,bytes,bytes)"),
   selector("activateDeviceWithApproval(address,bytes32,address,uint256,bytes)"),
   selector("relaySpend(address,address,address,uint256,uint256,bytes)"),
   selector("emergencyRescue(bytes32,address[],uint256[],address[],bytes32,uint256,bytes)"),
-  selector("sweepRetired(address,address)"),
+  SWEEP_RETIRED_SELECTOR,
   selector("requestEmergencyDestinationsChange(address,address,address,uint256,bytes)"),
   selector("applyEmergencyDestinationsChange()"),
   selector("cancelEmergencyDestinationsChange(address,uint256,bytes)"),
@@ -35,6 +34,9 @@ const ACCOUNT_SELECTORS = new Set([
 ]);
 const IDENTITY_SELECTOR = selector("identity()");
 const ACCOUNT_OF_SELECTOR = selector("accountOf(address)");
+const FACTORY_ACCOUNT_SELECTOR = selector("isFactoryAccount(address)");
+const RECOVERY_COMMITMENT_SELECTOR = selector("recoveryCommitment()");
+const SUCCESSOR_CONFIG_SELECTOR = selector("successorConfigHash()");
 const coder = ethers.AbiCoder.defaultAbiCoder();
 
 if (!addressPattern.test(FACTORY_ADDRESS)) throw new Error("SAFECORE_FACTORY_ADDRESS must be configured with the deployed V4 factory address.");
@@ -114,7 +116,7 @@ async function verifyFactory() {
   if (!code || code === "0x") throw new Error("factory_not_deployed");
 }
 
-async function verifyRegisteredAccount(target) {
+async function verifyCurrentRegisteredAccount(target) {
   const code = await provider.getCode(target);
   if (!code || code === "0x") throw new Error("target_not_contract");
   const identityRaw = await provider.call({ to: target, data: IDENTITY_SELECTOR });
@@ -126,6 +128,23 @@ async function verifyRegisteredAccount(target) {
   if (ethers.getAddress(registered) !== ethers.getAddress(target)) throw new Error("account_not_factory_registered");
 }
 
+async function verifyRetiredFactoryAccount(target) {
+  const code = await provider.getCode(target);
+  if (!code || code === "0x") throw new Error("target_not_contract");
+  const registryData = FACTORY_ACCOUNT_SELECTOR + ethers.zeroPadValue(target, 32).slice(2);
+  const registryRaw = await provider.call({ to: factory, data: registryData });
+  const [registered] = coder.decode(["bool"], registryRaw);
+  if (!registered) throw new Error("account_not_factory_registered");
+
+  const [recoveryRaw, successorRaw] = await Promise.all([
+    provider.call({ to: target, data: RECOVERY_COMMITMENT_SELECTOR }),
+    provider.call({ to: target, data: SUCCESSOR_CONFIG_SELECTOR }),
+  ]);
+  const [recovery] = coder.decode(["bytes32"], recoveryRaw);
+  const [successor] = coder.decode(["bytes32"], successorRaw);
+  if (recovery !== ethers.ZeroHash || successor === ethers.ZeroHash) throw new Error("account_not_retired");
+}
+
 async function validateTargetAndSelector(target, data) {
   const callSelector = data.slice(0, 10).toLowerCase();
   if (ethers.getAddress(target) === factory) {
@@ -133,7 +152,11 @@ async function validateTargetAndSelector(target, data) {
     return;
   }
   if (!ACCOUNT_SELECTORS.has(callSelector)) throw new Error("account_selector_not_allowed");
-  await verifyRegisteredAccount(target);
+  if (callSelector === SWEEP_RETIRED_SELECTOR) {
+    await verifyRetiredFactoryAccount(target);
+    return;
+  }
+  await verifyCurrentRegisteredAccount(target);
 }
 
 function withRelayNonceLock(fn) {
@@ -174,7 +197,7 @@ function publicError(error) {
   const code = String(error?.message || error || "relay_failed");
   const known = new Set([
     "request_too_large", "empty_request", "invalid_content_type", "invalid_target", "invalid_calldata", "wrong_chain",
-    "factory_not_deployed", "target_not_contract", "not_safecore_account", "account_not_factory_registered",
+    "factory_not_deployed", "target_not_contract", "not_safecore_account", "account_not_factory_registered", "account_not_retired",
     "factory_selector_not_allowed", "account_selector_not_allowed", "gas_limit_rejected", "gas_price_unavailable",
     "relayer_insufficient_bnb", "relayer_overloaded",
   ]);
