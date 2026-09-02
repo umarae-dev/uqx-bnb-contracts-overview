@@ -26,13 +26,11 @@ contract SafeCoreAccountV4_2 is SafeCoreAccountV4_1 {
         SafeCoreAccountV4_1(identity_, config)
     {}
 
-    /// @notice Any currently authorized trusted device can veto a queued
-    ///         emergency-destination weakening during the delay window.
     function cancelEmergencyDestinationsChange(
         address device,
         uint256 deadline,
         bytes calldata signature
-    ) external {
+    ) external onlyActiveAccount {
         if (!authorizedDevice[device]) revert NotAuthorized();
         if (pendingEmergencyDestinations.executableAt == 0) revert DestinationChangeMissing();
         if (deadline < block.timestamp) revert SignatureExpired();
@@ -47,15 +45,12 @@ contract SafeCoreAccountV4_2 is SafeCoreAccountV4_1 {
         emit EmergencyDestinationsChangeCancelled(device);
     }
 
-    /// @notice Cancels a queued budget increase even when the current budget is
-    ///         already zero. This closes the edge case where "reduce to cancel"
-    ///         cannot tighten the budget any further.
     function cancelBudgetIncrease(
         address device,
         address asset,
         uint256 deadline,
         bytes calldata signature
-    ) external {
+    ) external onlyActiveAccount {
         if (!authorizedDevice[device]) revert NotAuthorized();
         if (pendingBudgetChange[asset].executableAt == 0) revert BudgetIncreaseMissing();
         if (deadline < block.timestamp) revert SignatureExpired();
