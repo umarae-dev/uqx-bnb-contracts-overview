@@ -31,6 +31,7 @@ const ACCOUNT_SELECTORS = new Set([
   selector("relayArmRecovery(address,bytes32,uint256,bytes)"),
   selector("requestBudgetChange(address,address,uint192,uint256,bytes)"),
   selector("applyBudgetIncrease(address)"),
+  selector("cancelBudgetIncrease(address,address,uint256,bytes)"),
 ]);
 const IDENTITY_SELECTOR = selector("identity()");
 const ACCOUNT_OF_SELECTOR = selector("accountOf(address)");
