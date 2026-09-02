@@ -57,6 +57,11 @@ contract SafeCoreAccountV4_1 is ReentrancyGuard, EIP712 {
     uint256 public identityNonce;
     uint256 public enrollmentNonce;
 
+    // Enumerable trusted-device registry. The mapping remains the authority;
+    // this registry exists so clients can reliably display and revoke devices.
+    address[] private _authorizedDevices;
+    mapping(address => uint256) private _authorizedDeviceIndexPlusOne;
+
     address public emergencyAddress1;
     address public emergencyAddress2;
     bytes32 public recoveryCommitment;
@@ -124,6 +129,7 @@ contract SafeCoreAccountV4_1 is ReentrancyGuard, EIP712 {
     error PairingMismatch();
     error InvalidRecoverySecret();
     error RecoveryNotArmed();
+    error RecoveryAlreadyArmed();
     error EmergencyDestinationOnly();
     error InvalidEmergencyDestinations();
     error DestinationChangeMissing();
@@ -139,6 +145,7 @@ contract SafeCoreAccountV4_1 is ReentrancyGuard, EIP712 {
     error DuplicateAsset();
     error AmountTooLarge();
     error NativeTransferFailed();
+    error DeviceRegistryCorrupt();
 
     constructor(address identity_, InitConfig memory config) EIP712("SafeCoreAccountV4", "1") {
         if (identity_ == address(0) || config.initialDevice == address(0)) revert ZeroAddress();
@@ -155,8 +162,7 @@ contract SafeCoreAccountV4_1 is ReentrancyGuard, EIP712 {
         recoveryGeneration = 1;
         emergencyDestinationChangeDelay = config.destinationChangeDelay;
         budgetIncreaseDelay = config.destinationChangeDelay;
-        authorizedDevice[config.initialDevice] = true;
-        authorizedDeviceCount = 1;
+        _addAuthorizedDevice(config.initialDevice);
 
         uint64 nowTs = uint64(block.timestamp);
         for (uint256 i; i < config.initialAssets.length; ++i) {
@@ -213,8 +219,7 @@ contract SafeCoreAccountV4_1 is ReentrancyGuard, EIP712 {
         )));
         if (digest.recover(approvalSignature) != approvingDevice) revert InvalidSignature();
 
-        authorizedDevice[newDevice] = true;
-        authorizedDeviceCount += 1;
+        _addAuthorizedDevice(newDevice);
         delete pendingEnrollment[newDevice];
         emit DeviceActivated(newDevice, approvingDevice);
     }
@@ -355,11 +360,13 @@ contract SafeCoreAccountV4_1 is ReentrancyGuard, EIP712 {
             REVOKE_TYPEHASH, address(this), approvingDevice, target, nonce, deadline
         )));
         if (digest.recover(signature) != approvingDevice) revert InvalidSignature();
-        authorizedDevice[target] = false;
-        authorizedDeviceCount -= 1;
+        _removeAuthorizedDevice(target);
         emit DeviceRevoked(target, approvingDevice);
     }
 
+    /// @notice Arms a new one-time Recovery Card only after the previous card
+    ///         has been consumed by emergency rescue. An authorized stolen phone
+    ///         cannot silently replace a still-valid recovery commitment.
     function relayArmRecovery(
         address device,
         bytes32 commitment,
@@ -367,6 +374,7 @@ contract SafeCoreAccountV4_1 is ReentrancyGuard, EIP712 {
         bytes calldata signature
     ) external {
         if (commitment == bytes32(0)) revert RecoveryNotArmed();
+        if (recoveryCommitment != bytes32(0)) revert RecoveryAlreadyArmed();
         if (!authorizedDevice[device]) revert NotAuthorized();
         _checkDeadline(deadline);
         uint256 nonce = deviceNonce[device]++;
@@ -414,8 +422,6 @@ contract SafeCoreAccountV4_1 is ReentrancyGuard, EIP712 {
         }
     }
 
-    /// @notice Permissionless execution after the signed increase delay. The
-    /// relayer/executor cannot alter the amount that was signed and queued.
     function applyBudgetIncrease(address asset) external {
         PendingBudgetChange memory p = pendingBudgetChange[asset];
         if (p.executableAt == 0) revert BudgetIncreaseMissing();
@@ -432,7 +438,6 @@ contract SafeCoreAccountV4_1 is ReentrancyGuard, EIP712 {
         emit BudgetIncreaseApplied(asset, oldLimit, p.newLimit);
     }
 
-    /// @notice Backward-compatible emergency tightening for a gas-funded device.
     function reduceBudgetImmediately(address asset, uint192 newLimit) external {
         if (!authorizedDevice[msg.sender]) revert Unauthorized();
         _rollEpoch(asset);
@@ -451,6 +456,14 @@ contract SafeCoreAccountV4_1 is ReentrancyGuard, EIP712 {
         Budget memory b = _budgets[asset];
         uint192 effectiveSpent = _effectiveSpent(b);
         return (b.limit, effectiveSpent, b.limit > effectiveSpent ? uint256(b.limit - effectiveSpent) : 0, _effectiveEpochStart(b));
+    }
+
+    function authorizedDevices() external view returns (address[] memory) {
+        return _authorizedDevices;
+    }
+
+    function authorizedDeviceAt(uint256 index) external view returns (address) {
+        return _authorizedDevices[index];
     }
 
     function isEmergencyDestination(address candidate) external view returns (bool) { return _isEmergencyDestination(candidate); }
@@ -472,6 +485,31 @@ contract SafeCoreAccountV4_1 is ReentrancyGuard, EIP712 {
     }
 
     // ----------------------------- internals -------------------------------
+
+    function _addAuthorizedDevice(address device) private {
+        if (device == address(0)) revert ZeroAddress();
+        if (authorizedDevice[device]) revert AlreadyAuthorized();
+        authorizedDevice[device] = true;
+        _authorizedDevices.push(device);
+        _authorizedDeviceIndexPlusOne[device] = _authorizedDevices.length;
+        authorizedDeviceCount = _authorizedDevices.length;
+    }
+
+    function _removeAuthorizedDevice(address device) private {
+        uint256 indexPlusOne = _authorizedDeviceIndexPlusOne[device];
+        if (indexPlusOne == 0 || !authorizedDevice[device]) revert DeviceRegistryCorrupt();
+        uint256 index = indexPlusOne - 1;
+        uint256 lastIndex = _authorizedDevices.length - 1;
+        if (index != lastIndex) {
+            address moved = _authorizedDevices[lastIndex];
+            _authorizedDevices[index] = moved;
+            _authorizedDeviceIndexPlusOne[moved] = index + 1;
+        }
+        _authorizedDevices.pop();
+        delete _authorizedDeviceIndexPlusOne[device];
+        authorizedDevice[device] = false;
+        authorizedDeviceCount = _authorizedDevices.length;
+    }
 
     function _checkDeadline(uint256 deadline) private view {
         if (deadline < block.timestamp) revert SignatureExpired();
