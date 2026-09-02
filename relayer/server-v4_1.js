@@ -22,7 +22,7 @@ const ACCOUNT_SELECTORS = new Set([
   selector("requestDeviceEnrollment(address,bytes32,uint256,bytes,bytes)"),
   selector("activateDeviceWithApproval(address,bytes32,address,uint256,bytes)"),
   selector("relaySpend(address,address,address,uint256,uint256,bytes)"),
-  selector("emergencyRescue(bytes32,address[],uint256[],address[],address,bytes32,uint256,bytes)"),
+  selector("emergencyRescue(bytes32,bytes,address,bytes32,uint256,bytes)"),
   SWEEP_RETIRED_SELECTOR,
   selector("requestEmergencyDestinationsChange(address,address,address,uint256,bytes)"),
   selector("applyEmergencyDestinationsChange()"),
