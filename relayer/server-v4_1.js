@@ -10,6 +10,8 @@ const RELAYER_PRIVATE_KEY = (process.env.SAFECORE_RELAYER_PRIVATE_KEY || "").tri
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_GAS = BigInt(process.env.SAFECORE_RELAYER_MAX_GAS || "1200000");
 const RATE_LIMIT_PER_MINUTE = Number(process.env.SAFECORE_RELAYER_RATE_LIMIT || "30");
+const MAX_PENDING_RELAYS = Number(process.env.SAFECORE_RELAYER_MAX_PENDING || "64");
+const TRUST_PROXY = /^(1|true|yes)$/i.test(String(process.env.SAFECORE_TRUST_PROXY || "false"));
 
 const addressPattern = /^0x[0-9a-fA-F]{40}$/;
 const hexPattern = /^0x[0-9a-fA-F]*$/;
@@ -37,12 +39,14 @@ if (!addressPattern.test(FACTORY_ADDRESS)) throw new Error("SAFECORE_FACTORY_ADD
 if (!/^0x[0-9a-fA-F]{64}$/.test(RELAYER_PRIVATE_KEY)) throw new Error("SAFECORE_RELAYER_PRIVATE_KEY must be supplied through the private runtime environment.");
 if (!Number.isSafeInteger(PORT) || PORT < 1 || PORT > 65535) throw new Error("Invalid PORT.");
 if (!Number.isFinite(RATE_LIMIT_PER_MINUTE) || RATE_LIMIT_PER_MINUTE < 1 || RATE_LIMIT_PER_MINUTE > 600) throw new Error("Invalid SAFECORE_RELAYER_RATE_LIMIT.");
+if (!Number.isSafeInteger(MAX_PENDING_RELAYS) || MAX_PENDING_RELAYS < 1 || MAX_PENDING_RELAYS > 1000) throw new Error("Invalid SAFECORE_RELAYER_MAX_PENDING.");
 
 const provider = new ethers.JsonRpcProvider(RPC_URL, Number(CHAIN_ID), { staticNetwork: true });
 const wallet = new ethers.Wallet(RELAYER_PRIVATE_KEY, provider);
 const factory = ethers.getAddress(FACTORY_ADDRESS);
 const rate = new Map();
 let relayQueue = Promise.resolve();
+let pendingRelays = 0;
 
 function json(res, status, body) {
   const payload = Buffer.from(JSON.stringify(body));
@@ -57,10 +61,13 @@ function json(res, status, body) {
 }
 
 function clientIp(req) {
-  // The production HTTPS edge MUST delete client-provided forwarding headers
-  // and set one trusted X-Forwarded-For value itself.
-  const forwarded = String(req.headers["x-forwarded-for"] || "").split(",").map((x) => x.trim()).filter(Boolean);
-  return forwarded.at(-1) || req.socket.remoteAddress || "unknown";
+  // Forwarding headers are untrusted unless an HTTPS edge is explicitly enabled
+  // and configured to delete client-provided forwarding headers first.
+  if (TRUST_PROXY) {
+    const forwarded = String(req.headers["x-forwarded-for"] || "").split(",").map((x) => x.trim()).filter(Boolean);
+    if (forwarded.length) return forwarded.at(-1);
+  }
+  return req.socket.remoteAddress || "unknown";
 }
 
 function checkRateLimit(req) {
@@ -78,6 +85,8 @@ function checkRateLimit(req) {
 }
 
 async function readJson(req) {
+  const contentType = String(req.headers["content-type"] || "").toLowerCase();
+  if (!contentType.startsWith("application/json")) throw new Error("invalid_content_type");
   let total = 0;
   const chunks = [];
   for await (const chunk of req) {
@@ -128,7 +137,16 @@ async function validateTargetAndSelector(target, data) {
 }
 
 function withRelayNonceLock(fn) {
-  const next = relayQueue.then(fn, fn);
+  if (pendingRelays >= MAX_PENDING_RELAYS) return Promise.reject(new Error("relayer_overloaded"));
+  pendingRelays += 1;
+  const wrapped = async () => {
+    try {
+      return await fn();
+    } finally {
+      pendingRelays -= 1;
+    }
+  };
+  const next = relayQueue.then(wrapped, wrapped);
   relayQueue = next.catch(() => undefined);
   return next;
 }
@@ -163,10 +181,10 @@ async function relay(target, data) {
 function publicError(error) {
   const code = String(error?.message || error || "relay_failed");
   const known = new Set([
-    "request_too_large", "empty_request", "invalid_target", "invalid_calldata", "wrong_chain",
+    "request_too_large", "empty_request", "invalid_content_type", "invalid_target", "invalid_calldata", "wrong_chain",
     "factory_not_deployed", "target_not_contract", "not_safecore_account", "account_not_factory_registered",
     "factory_selector_not_allowed", "account_selector_not_allowed", "gas_limit_rejected", "gas_price_unavailable",
-    "relayer_insufficient_bnb",
+    "relayer_insufficient_bnb", "relayer_overloaded",
   ]);
   return known.has(code) ? code : "signed_call_rejected";
 }
@@ -191,9 +209,16 @@ const server = http.createServer(async (req, res) => {
     // Never log request calldata: emergency rescue calldata includes the one-time
     // Recovery Card secret and signed payloads may contain privacy-sensitive data.
     const code = publicError(error);
-    return json(res, code === "request_too_large" ? 413 : 400, { error: code });
+    const status = code === "request_too_large" ? 413 : code === "relayer_overloaded" ? 503 : 400;
+    return json(res, status, { error: code });
   }
 });
+
+// Bound resource exposure against slowloris and abusive keep-alive clients.
+server.requestTimeout = 15_000;
+server.headersTimeout = 10_000;
+server.keepAliveTimeout = 5_000;
+server.maxRequestsPerSocket = 100;
 
 async function boot() {
   await verifyFactory();
@@ -202,6 +227,7 @@ async function boot() {
   console.log(`Factory: ${factory}`);
   console.log(`Relayer: ${wallet.address}`);
   console.log(`Relayer balance: ${ethers.formatEther(balance)} BNB`);
+  console.log(`Trusted proxy headers: ${TRUST_PROXY ? "enabled" : "disabled"}`);
   console.log("Calldata and private keys are never logged by this service.");
   server.listen(PORT, "0.0.0.0", () => console.log(`Listening on :${PORT}`));
 }
