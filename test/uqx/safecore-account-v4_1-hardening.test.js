@@ -33,11 +33,23 @@ describe("SafeCoreAccountV4_1 hardening", function () {
       { name: "deadline", type: "uint256" },
     ],
   };
-  const armTypes = {
-    ArmRecovery: [
+  const rescueTypes = {
+    EmergencyRescue: [
+      { name: "account", type: "address" },
+      { name: "identity", type: "address" },
+      { name: "rescueHash", type: "bytes32" },
+      { name: "recoveryGeneration", type: "uint256" },
+      { name: "nonce", type: "uint256" },
+      { name: "deadline", type: "uint256" },
+    ],
+  };
+  const spendTypes = {
+    DeviceSpend: [
       { name: "account", type: "address" },
       { name: "device", type: "address" },
-      { name: "commitment", type: "bytes32" },
+      { name: "asset", type: "address" },
+      { name: "to", type: "address" },
+      { name: "amount", type: "uint256" },
       { name: "nonce", type: "uint256" },
       { name: "deadline", type: "uint256" },
     ],
@@ -147,20 +159,63 @@ describe("SafeCoreAccountV4_1 hardening", function () {
       .to.be.revertedWithCustomError(account, "LastDevice");
   });
 
-  it("blocks an authorized device from replacing an active Recovery Card", async function () {
-    const { account, deviceA, relayer, domain, commitment } = await fixture();
-    const replacement = ethers.keccak256(ethers.toUtf8Bytes("replacement-card"));
-    const deadline = BigInt((await time.latest()) + 3600);
-    const value = {
-      account: await account.getAddress(),
-      device: deviceA.address,
-      commitment: replacement,
-      nonce: await account.deviceNonce(deviceA.address),
-      deadline,
+  it("permanently blocks an old trusted device from spending after emergency rescue", async function () {
+    const { account, identity, deviceA, relayer, safe1, paper, domain } = await fixture();
+    const accountAddress = await account.getAddress();
+    await identity.sendTransaction({ to: accountAddress, value: ethers.parseEther("0.05") });
+
+    const rescueAssets = [NATIVE];
+    const rescueAmounts = [ethers.parseEther("0.04")];
+    const rescueDestinations = [safe1.address];
+    const rescueHash = ethers.keccak256(
+      ethers.AbiCoder.defaultAbiCoder().encode(
+        ["address[]", "uint256[]", "address[]"],
+        [rescueAssets, rescueAmounts, rescueDestinations],
+      ),
+    );
+    const rescueDeadline = BigInt((await time.latest()) + 3600);
+    const rescueValue = {
+      account: accountAddress,
+      identity: identity.address,
+      rescueHash,
+      recoveryGeneration: await account.recoveryGeneration(),
+      nonce: await account.identityNonce(),
+      deadline: rescueDeadline,
     };
-    const sig = await deviceA.signTypedData(domain, armTypes, value);
-    await expect(account.connect(relayer).relayArmRecovery(deviceA.address, replacement, deadline, sig))
-      .to.be.revertedWithCustomError(account, "RecoveryAlreadyArmed");
-    expect(await account.recoveryCommitment()).to.equal(commitment);
+    const rescueSig = await identity.signTypedData(domain, rescueTypes, rescueValue);
+    await account.connect(relayer).emergencyRescue(
+      paper,
+      rescueAssets,
+      rescueAmounts,
+      rescueDestinations,
+      rescueDeadline,
+      rescueSig,
+    );
+    expect(await account.recoveryCommitment()).to.equal(ethers.ZeroHash);
+
+    // Leave 0.01 BNB in the retired account on purpose. Even a still-authorized
+    // old Device A with a perfectly valid fresh signature must never move it.
+    expect(await ethers.provider.getBalance(accountAddress)).to.equal(ethers.parseEther("0.01"));
+    const spendDeadline = BigInt((await time.latest()) + 3600);
+    const spendValue = {
+      account: accountAddress,
+      device: deviceA.address,
+      asset: NATIVE,
+      to: safe1.address,
+      amount: ethers.parseEther("0.005"),
+      nonce: await account.deviceNonce(deviceA.address),
+      deadline: spendDeadline,
+    };
+    const spendSig = await deviceA.signTypedData(domain, spendTypes, spendValue);
+    await expect(
+      account.connect(deviceA).relaySpend(
+        deviceA.address,
+        NATIVE,
+        safe1.address,
+        spendValue.amount,
+        spendDeadline,
+        spendSig,
+      ),
+    ).to.be.revertedWithCustomError(account, "RecoveryNotArmed");
   });
 });
