@@ -5,6 +5,10 @@ import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import "./SafeCoreAccountV4_2.sol";
 
+interface ISafeCoreRecoveryStateV4 {
+    function recoveryCommitment() external view returns (bytes32);
+}
+
 /// @title SafeCoreFactoryV4
 /// @notice EXPERIMENTAL gasless account factory. NOT AUDITED.
 /// @dev Any relayer may pay deployment gas, but the recovery identity signs the
@@ -48,7 +52,17 @@ contract SafeCoreFactoryV4 is EIP712 {
         bytes calldata identitySignature
     ) external returns (address account) {
         if (identity == address(0)) revert ZeroAddress();
-        if (accountOf[identity] != address(0)) revert AccountAlreadyExists();
+
+        // Normal operation remains strictly one account per recovery identity.
+        // The only replacement path is after a successful one-time emergency
+        // rescue has consumed the previous account's Recovery Card commitment.
+        // This lets a user who permanently lost the final trusted phone start a
+        // fresh SafeCore account without granting the lost device authority over
+        // the replacement account.
+        address previous = accountOf[identity];
+        if (previous != address(0) && ISafeCoreRecoveryStateV4(previous).recoveryCommitment() != bytes32(0)) {
+            revert AccountAlreadyExists();
+        }
         if (deadline < block.timestamp) revert SignatureExpired();
 
         bytes32 configHash = configurationHash(config);
