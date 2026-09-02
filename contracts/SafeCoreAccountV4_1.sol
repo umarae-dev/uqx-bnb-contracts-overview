@@ -12,8 +12,9 @@ import "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 /// @dev Relayers pay gas but are never authority. Normal value movement requires
 ///      an authorized device signature. Lost-phone rescue requires the recovery
 ///      identity signature + a one-time paper secret and remains restricted to
-///      the two pre-registered emergency destinations. Consuming that one-time
-///      recovery permanently retires this account from normal spending.
+///      the two pre-registered emergency destinations. A successful rescue also
+///      commits the exact successor account configuration and permanently retires
+///      every mutable authority on this account.
 contract SafeCoreAccountV4_1 is ReentrancyGuard, EIP712 {
     using SafeERC20 for IERC20;
     using ECDSA for bytes32;
@@ -33,7 +34,7 @@ contract SafeCoreAccountV4_1 is ReentrancyGuard, EIP712 {
         "DeviceSpend(address account,address device,address asset,address to,uint256 amount,uint256 nonce,uint256 deadline)"
     );
     bytes32 private constant RESCUE_TYPEHASH = keccak256(
-        "EmergencyRescue(address account,address identity,bytes32 rescueHash,uint256 recoveryGeneration,uint256 nonce,uint256 deadline)"
+        "EmergencyRescue(address account,address identity,bytes32 rescueHash,bytes32 successorConfigHash,uint256 recoveryGeneration,uint256 nonce,uint256 deadline)"
     );
     bytes32 private constant DESTINATIONS_TYPEHASH = keccak256(
         "ChangeEmergencyDestinations(address account,address device,address first,address second,uint256 nonce,uint256 deadline)"
@@ -62,6 +63,10 @@ contract SafeCoreAccountV4_1 is ReentrancyGuard, EIP712 {
     address public emergencyAddress2;
     bytes32 public recoveryCommitment;
     uint256 public recoveryGeneration;
+
+    /// @notice Exact factory configuration that may replace this account after
+    /// terminal recovery. Zero while the account is live.
+    bytes32 public successorConfigHash;
 
     struct InitConfig {
         address initialDevice;
@@ -104,6 +109,8 @@ contract SafeCoreAccountV4_1 is ReentrancyGuard, EIP712 {
     event DeviceActivated(address indexed newDevice, address indexed approvingDevice);
     event DeviceRevoked(address indexed device, address indexed approvedBy);
     event EmergencyRescueExecuted(address indexed relayer, uint256 indexed generation, address indexed destination, address asset, uint256 amount);
+    event AccountRetired(bytes32 indexed successorConfigHash);
+    event RetiredAssetSwept(address indexed asset, address indexed destination, uint256 amount);
     event EmergencyDestinationsChangeRequested(address indexed first, address indexed second, uint256 executableAt, address approvedBy);
     event EmergencyDestinationsChanged(address indexed first, address indexed second);
     event BudgetReduced(address indexed asset, uint256 oldLimit, uint256 newLimit);
@@ -124,6 +131,9 @@ contract SafeCoreAccountV4_1 is ReentrancyGuard, EIP712 {
     error PairingMismatch();
     error InvalidRecoverySecret();
     error RecoveryNotArmed();
+    error RetiredAccount();
+    error AccountNotRetired();
+    error InvalidSuccessorConfig();
     error EmergencyDestinationOnly();
     error InvalidEmergencyDestinations();
     error DestinationChangeMissing();
@@ -140,6 +150,11 @@ contract SafeCoreAccountV4_1 is ReentrancyGuard, EIP712 {
     error AmountTooLarge();
     error NativeTransferFailed();
     error DeviceRegistryCorrupt();
+
+    modifier onlyActiveAccount() {
+        if (recoveryCommitment == bytes32(0)) revert RetiredAccount();
+        _;
+    }
 
     constructor(address identity_, InitConfig memory config) EIP712("SafeCoreAccountV4", "1") {
         if (identity_ == address(0) || config.initialDevice == address(0)) revert ZeroAddress();
@@ -176,7 +191,7 @@ contract SafeCoreAccountV4_1 is ReentrancyGuard, EIP712 {
         uint256 deadline,
         bytes calldata identitySignature,
         bytes calldata newDeviceSignature
-    ) external {
+    ) external onlyActiveAccount {
         if (newDevice == address(0)) revert ZeroAddress();
         if (authorizedDevice[newDevice]) revert AlreadyAuthorized();
         if (pairingHash == bytes32(0)) revert PairingMismatch();
@@ -199,7 +214,7 @@ contract SafeCoreAccountV4_1 is ReentrancyGuard, EIP712 {
         address approvingDevice,
         uint256 deadline,
         bytes calldata approvalSignature
-    ) external {
+    ) external onlyActiveAccount {
         PendingEnrollment memory p = pendingEnrollment[newDevice];
         if (p.requestedAt == 0) revert EnrollmentMissing();
         if (p.pairingHash != pairingHash) revert PairingMismatch();
@@ -223,7 +238,7 @@ contract SafeCoreAccountV4_1 is ReentrancyGuard, EIP712 {
         uint256 amount,
         uint256 deadline,
         bytes calldata deviceSignature
-    ) external nonReentrant {
+    ) external nonReentrant onlyActiveAccount {
         if (!authorizedDevice[device]) revert NotAuthorized();
         if (to == address(0)) revert ZeroAddress();
         if (amount == 0) revert ZeroAmount();
@@ -253,14 +268,15 @@ contract SafeCoreAccountV4_1 is ReentrancyGuard, EIP712 {
         address[] calldata assets,
         uint256[] calldata amounts,
         address[] calldata destinations,
+        bytes32 successorConfigHash_,
         uint256 deadline,
         bytes calldata identitySignature
-    ) external nonReentrant {
+    ) external nonReentrant onlyActiveAccount {
         uint256 length = assets.length;
         if (length == 0 || length != amounts.length || length != destinations.length) revert ArrayLengthMismatch();
         if (length > MAX_RESCUE_ITEMS) revert TooManyItems();
+        if (successorConfigHash_ == bytes32(0)) revert InvalidSuccessorConfig();
         _checkDeadline(deadline);
-        if (recoveryCommitment == bytes32(0)) revert RecoveryNotArmed();
         if (keccak256(abi.encodePacked(paperSecret)) != recoveryCommitment) revert InvalidRecoverySecret();
 
         for (uint256 i; i < length; ++i) {
@@ -272,14 +288,23 @@ contract SafeCoreAccountV4_1 is ReentrancyGuard, EIP712 {
         uint256 nonce = identityNonce++;
         uint256 generation = recoveryGeneration;
         bytes32 digest = _hashTypedDataV4(keccak256(abi.encode(
-            RESCUE_TYPEHASH, address(this), identity, rescueHash, generation, nonce, deadline
+            RESCUE_TYPEHASH,
+            address(this),
+            identity,
+            rescueHash,
+            successorConfigHash_,
+            generation,
+            nonce,
+            deadline
         )));
         if (digest.recover(identitySignature) != identity) revert InvalidSignature();
 
-        // The one-time recovery commitment doubles as the permanent account
-        // retirement sentinel. Burn before external interactions; any revert
-        // restores it atomically. Once zero, _consumeBudget can never spend.
+        // Commit the only permitted replacement configuration and permanently
+        // retire this account before external interactions. A revert restores
+        // both values atomically.
+        successorConfigHash = successorConfigHash_;
         recoveryCommitment = bytes32(0);
+        emit AccountRetired(successorConfigHash_);
 
         for (uint256 i; i < length; ++i) {
             address asset = assets[i];
@@ -303,13 +328,36 @@ contract SafeCoreAccountV4_1 is ReentrancyGuard, EIP712 {
         }
     }
 
+    /// @notice Permissionless cleanup for assets that arrive after terminal
+    /// recovery, or unsupported ERC20 balances that were not included in the
+    /// original rescue. Funds can only move to the pre-registered emergency
+    /// addresses, so the caller receives no authority or value.
+    function sweepRetired(address asset, address payable destination) external nonReentrant {
+        if (recoveryCommitment != bytes32(0)) revert AccountNotRetired();
+        if (!_isEmergencyDestination(destination)) revert EmergencyDestinationOnly();
+
+        uint256 amount;
+        if (asset == NATIVE_ASSET) {
+            amount = address(this).balance;
+            if (amount == 0) revert InsufficientBalance();
+            (bool ok,) = destination.call{value: amount}("");
+            if (!ok) revert NativeTransferFailed();
+        } else {
+            IERC20 token = IERC20(asset);
+            amount = token.balanceOf(address(this));
+            if (amount == 0) revert InsufficientBalance();
+            token.safeTransfer(destination, amount);
+        }
+        emit RetiredAssetSwept(asset, destination, amount);
+    }
+
     function requestEmergencyDestinationsChange(
         address device,
         address first,
         address second,
         uint256 deadline,
         bytes calldata deviceSignature
-    ) external {
+    ) external onlyActiveAccount {
         _validateDestinations(first, second);
         if (!authorizedDevice[device]) revert NotAuthorized();
         _checkDeadline(deadline);
@@ -324,7 +372,7 @@ contract SafeCoreAccountV4_1 is ReentrancyGuard, EIP712 {
         emit EmergencyDestinationsChangeRequested(first, second, executableAt, device);
     }
 
-    function applyEmergencyDestinationsChange() external {
+    function applyEmergencyDestinationsChange() external onlyActiveAccount {
         PendingDestinations memory p = pendingEmergencyDestinations;
         if (p.executableAt == 0) revert DestinationChangeMissing();
         if (block.timestamp < p.executableAt) revert DestinationChangeNotReady();
@@ -339,7 +387,7 @@ contract SafeCoreAccountV4_1 is ReentrancyGuard, EIP712 {
         address target,
         uint256 deadline,
         bytes calldata signature
-    ) external {
+    ) external onlyActiveAccount {
         if (!authorizedDevice[approvingDevice] || !authorizedDevice[target]) revert NotAuthorized();
         if (authorizedDeviceCount <= 1) revert LastDevice();
         _checkDeadline(deadline);
@@ -358,7 +406,7 @@ contract SafeCoreAccountV4_1 is ReentrancyGuard, EIP712 {
         uint192 newLimit,
         uint256 deadline,
         bytes calldata signature
-    ) external {
+    ) external onlyActiveAccount {
         if (!authorizedDevice[device]) revert NotAuthorized();
         _checkDeadline(deadline);
         uint256 nonce = deviceNonce[device]++;
@@ -384,7 +432,7 @@ contract SafeCoreAccountV4_1 is ReentrancyGuard, EIP712 {
         }
     }
 
-    function applyBudgetIncrease(address asset) external {
+    function applyBudgetIncrease(address asset) external onlyActiveAccount {
         PendingBudgetChange memory p = pendingBudgetChange[asset];
         if (p.executableAt == 0) revert BudgetIncreaseMissing();
         if (block.timestamp < p.executableAt) revert BudgetIncreaseNotReady();
@@ -400,7 +448,7 @@ contract SafeCoreAccountV4_1 is ReentrancyGuard, EIP712 {
         emit BudgetIncreaseApplied(asset, oldLimit, p.newLimit);
     }
 
-    function reduceBudgetImmediately(address asset, uint192 newLimit) external {
+    function reduceBudgetImmediately(address asset, uint192 newLimit) external onlyActiveAccount {
         if (!authorizedDevice[msg.sender]) revert Unauthorized();
         _rollEpoch(asset);
         Budget storage b = _budgets[asset];
@@ -427,6 +475,8 @@ contract SafeCoreAccountV4_1 is ReentrancyGuard, EIP712 {
     }
 
     function isEmergencyDestination(address candidate) external view returns (bool) { return _isEmergencyDestination(candidate); }
+
+    function isRetired() external view returns (bool) { return recoveryCommitment == bytes32(0); }
 
     function enrollmentDigest(address newDevice, bytes32 pairingHash, uint256 nonce, uint256 deadline) external view returns (bytes32) {
         return _hashTypedDataV4(keccak256(abi.encode(ENROLL_TYPEHASH, address(this), newDevice, pairingHash, nonce, deadline)));
@@ -484,10 +534,7 @@ contract SafeCoreAccountV4_1 is ReentrancyGuard, EIP712 {
     }
 
     function _consumeBudget(address asset, uint256 amount) private {
-        // Emergency rescue is terminal for this account. The zero commitment is
-        // the retirement sentinel and permanently blocks every normal spend,
-        // including a direct transaction from a previously trusted/lost phone.
-        if (recoveryCommitment == bytes32(0)) revert RecoveryNotArmed();
+        if (recoveryCommitment == bytes32(0)) revert RetiredAccount();
         if (amount == 0) revert ZeroAmount();
         if (amount > type(uint192).max) revert AmountTooLarge();
         _rollEpoch(asset);
