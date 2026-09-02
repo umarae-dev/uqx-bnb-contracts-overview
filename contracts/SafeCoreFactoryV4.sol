@@ -11,7 +11,7 @@ import "./SafeCoreAccountV4_2.sol";
 ///      exact configuration hash. The relayer cannot alter devices, rescue
 ///      addresses, recovery commitment, delay, assets or limits. Newly created
 ///      accounts use the latest hardened V4 implementation while preserving the
-///      V4 factory ABI and EIP-712 domain expected by clients.
+///      V4 creation ABI and EIP-712 domain expected by clients.
 contract SafeCoreFactoryV4 is EIP712 {
     using ECDSA for bytes32;
 
@@ -84,9 +84,5 @@ contract SafeCoreFactoryV4 is EIP712 {
             config.initialAssets,
             config.initialLimits
         ));
-    }
-
-    function createDigest(address identity, bytes32 configHash, uint256 nonce, uint256 deadline) external view returns (bytes32) {
-        return _hashTypedDataV4(keccak256(abi.encode(CREATE_TYPEHASH, identity, configHash, nonce, deadline)));
     }
 }
